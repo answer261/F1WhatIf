@@ -7,25 +7,16 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useSeasonData } from "./hooks/useSeasonData";
 import { useRaceStore } from "./store/useRaceStore";
 import RaceListScreen from "./screens/RaceListScreen";
 import EditRaceScreen from "./screens/EditRaceScreen";
 import StandingsScreen from "./screens/StandingsScreen";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NAVIGATION
-// ─────────────────────────────────────────────────────────────────────────────
-
 type Screen =
   | { name: "raceList" }
   | { name: "editRace"; raceId: number }
   | { name: "standings" };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LOADING SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
 
 function LoadingScreen() {
   return (
@@ -35,10 +26,6 @@ function LoadingScreen() {
     </View>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ERROR SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
 
 function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
@@ -52,99 +39,53 @@ function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ROOT
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "raceList" });
   const seasonData = useSeasonData();
   const { loadSeason, isSeasonLoaded } = useRaceStore();
 
-  // Once data is fetched, push it into the store (only once)
   useEffect(() => {
     if (seasonData.status === "success" && !isSeasonLoaded) {
-      loadSeason(seasonData.data);
+      loadSeason(
+        seasonData.data.seasonData,
+        seasonData.data.driverStandings,
+        seasonData.data.constructorStandings
+      );
     }
   }, [seasonData.status, isSeasonLoaded]);
 
-  const goToRaceList  = () => setScreen({ name: "raceList" });
-  const goToEditRace  = (raceId: number) => setScreen({ name: "editRace", raceId });
-  const goToStandings = () => setScreen({ name: "standings" });
-
   return (
-    <SafeAreaProvider>
     <GestureHandlerRootView style={styles.root}>
       {seasonData.status === "loading" && <LoadingScreen />}
-
       {seasonData.status === "error" && (
         <ErrorScreen message={seasonData.error} onRetry={seasonData.retry} />
       )}
-
       {seasonData.status === "success" && (
         <>
           {screen.name === "raceList" && (
             <RaceListScreen
-              onSelectRace={goToEditRace}
-              onOpenStandings={goToStandings}
+              onSelectRace={(id) => setScreen({ name: "editRace", raceId: id })}
+              onOpenStandings={() => setScreen({ name: "standings" })}
             />
           )}
           {screen.name === "editRace" && (
-            <EditRaceScreen raceId={screen.raceId} onBack={goToRaceList} />
+            <EditRaceScreen raceId={screen.raceId} onBack={() => setScreen({ name: "raceList" })} />
           )}
           {screen.name === "standings" && (
-            <StandingsScreen onBack={goToRaceList} />
+            <StandingsScreen onBack={() => setScreen({ name: "raceList" })} />
           )}
         </>
       )}
     </GestureHandlerRootView>
-    </SafeAreaProvider>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: "#0f0f0f",
-  },
-  centered: {
-    flex: 1,
-    backgroundColor: "#0f0f0f",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 32,
-    gap: 16,
-  },
-  loadingText: {
-    color: "#888",
-    fontSize: 14,
-    marginTop: 12,
-  },
-  errorTitle: {
-    color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  errorMessage: {
-    color: "#888",
-    fontSize: 13,
-    textAlign: "center",
-  },
-  retryBtn: {
-    marginTop: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    backgroundColor: "#e8002d",
-    borderRadius: 8,
-  },
-  retryText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-  },
+  root:         { flex: 1, backgroundColor: "#0f0f0f" },
+  centered:     { flex: 1, backgroundColor: "#0f0f0f", alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
+  loadingText:  { color: "#888", fontSize: 14, marginTop: 12 },
+  errorTitle:   { color: "#ffffff", fontSize: 17, fontWeight: "700", textAlign: "center" },
+  errorMessage: { color: "#888", fontSize: 13, textAlign: "center" },
+  retryBtn:     { marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, backgroundColor: "#e8002d", borderRadius: 8 },
+  retryText:    { color: "#fff", fontWeight: "700", fontSize: 14 },
 });

@@ -9,34 +9,24 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import {
-  NestableDraggableFlatList,
-  NestableScrollContainer,
+import DraggableFlatList, {
   RenderItemParams,
   ScaleDecorator,
 } from "react-native-draggable-flatlist";
 import { useRaceStore } from "../store/useRaceStore";
 import type { RaceEntry, Driver } from "../data/f1-constants";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
+const SPRINT_POINTS_CUTOFF = 8;
 
-type Props = {
-  raceId: number;
-  onBack: () => void;
-};
-
-type RowItem = {
-  driverId: string;
-  isDnf: boolean;
-};
+type Props = { raceId: number; onBack: () => void };
+type RowItem = { driverId: string; isDnf: boolean };
+type ActiveTab = "race" | "sprint";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildInitialItems(entries: RaceEntry[]): RowItem[] {
+function buildRaceItems(entries: RaceEntry[]): RowItem[] {
   const finishers = entries
     .filter((e) => e.position !== null)
     .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
@@ -47,15 +37,43 @@ function buildInitialItems(entries: RaceEntry[]): RowItem[] {
   return [...finishers, ...dnfs];
 }
 
-function buildResultsFromItems(items: RowItem[], originalEntries: RaceEntry[]): RaceEntry[] {
-  let pos = 1;
-  return items.map((item) => {
-    const original = originalEntries.find((e) => e.driverId === item.driverId);
-    if (item.isDnf) {
-      return { driverId: item.driverId, position: null, sprintPosition: original?.sprintPosition };
-    }
-    return { driverId: item.driverId, position: pos++, sprintPosition: original?.sprintPosition };
-  });
+function buildSprintItems(entries: RaceEntry[]): RowItem[] {
+  const finishers = entries
+    .filter((e) => e.sprintPosition !== null && e.sprintPosition !== undefined)
+    .sort((a, b) => (a.sprintPosition ?? 99) - (b.sprintPosition ?? 99))
+    .map((e) => ({ driverId: e.driverId, isDnf: false }));
+  const dnfs = entries
+    .filter((e) => e.sprintPosition === null || e.sprintPosition === undefined)
+    .map((e) => ({ driverId: e.driverId, isDnf: true }));
+  return [...finishers, ...dnfs];
+}
+
+function buildResultsFromItems(
+  raceItems: RowItem[],
+  sprintItems: RowItem[],
+  originalEntries: RaceEntry[]
+): RaceEntry[] {
+  let racePos = 1;
+  const racePosMap = new Map<string, number | null>();
+  for (const item of raceItems) {
+    racePosMap.set(item.driverId, item.isDnf ? null : racePos++);
+  }
+
+  let sprintPos = 1;
+  const sprintPosMap = new Map<string, number | null>();
+  for (const item of sprintItems) {
+    sprintPosMap.set(item.driverId, item.isDnf ? null : sprintPos++);
+  }
+
+  return originalEntries.map((entry) => ({
+    driverId: entry.driverId,
+    position: racePosMap.has(entry.driverId)
+      ? racePosMap.get(entry.driverId) ?? null
+      : entry.position,
+    sprintPosition: sprintPosMap.has(entry.driverId)
+      ? sprintPosMap.get(entry.driverId) ?? null
+      : entry.sprintPosition,
+  }));
 }
 
 function itemsEqual(a: RowItem[], b: RowItem[]): boolean {
@@ -64,7 +82,7 @@ function itemsEqual(a: RowItem[], b: RowItem[]): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRIVER ROW
+// DRIVER ROW — identical for both race and sprint
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DriverRowProps = RenderItemParams<RowItem> & {
@@ -99,7 +117,9 @@ const DriverRow = React.memo(({
         <Text style={styles.driverFlag}>{driver?.flag ?? "🏁"}</Text>
         <View>
           <Text style={styles.driverShort}>{driver?.short ?? "???"}</Text>
-          <Text style={styles.driverName} numberOfLines={1}>{driver?.name ?? item.driverId}</Text>
+          <Text style={styles.driverName} numberOfLines={1}>
+            {driver?.name ?? item.driverId}
+          </Text>
         </View>
       </View>
       <TouchableOpacity
@@ -120,67 +140,30 @@ const DriverRow = React.memo(({
 ));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN
+// DRAGGABLE LIST
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function EditRaceScreen({ raceId, onBack }: Props) {
-  const {
-    seasonData,
-    raceLoadStates,
-    loadRaceResults,
-    getResultsForRace,
-    setRaceResults,
-    resetRace,
-    isRaceModified,
-  } = useRaceStore();
+type DraggableListProps = {
+  items: RowItem[];
+  originalItems: RowItem[];
+  isSprint: boolean;
+  drivers: Record<string, Driver>;
+  teams: Record<string, any>;
+  onDragEnd: (data: RowItem[]) => void;
+  onToggleDnf: (driverId: string) => void;
+};
 
-  const race = useMemo(
-    () => seasonData?.races.find((r) => r.id === raceId),
-    [seasonData, raceId]
-  );
-
-  const drivers = seasonData?.drivers ?? {};
-  const teams = seasonData?.teams ?? {};
-  const loadState = raceLoadStates[raceId] ?? "idle";
-  const isLoaded = loadState === "loaded";
-  const isLoading = loadState === "loading";
-  const hasError = loadState === "error";
-
-  console.log("EditRaceScreen raceId:", raceId, "loadState:", loadState);
-
-  // Trigger fetch when screen opens
-  useEffect(() => {
-    loadRaceResults(raceId);
-  }, [raceId]);
-
-  // Local edit state — only initialised once results are loaded
-  const [items, setItems] = useState<RowItem[]>([]);
-  const [editInitialised, setEditInitialised] = useState(false);
-
-  useEffect(() => {
-    if (isLoaded && !editInitialised) {
-      setItems(buildInitialItems(getResultsForRace(raceId)));
-      setEditInitialised(true);
-    }
-  }, [isLoaded, editInitialised, raceId, getResultsForRace]);
-
-  const modified = isRaceModified(raceId);
-
-  const originalItems = useMemo(
-    () => buildInitialItems(race?.results ?? []),
-    [race]
-  );
-
-  const hasUnsavedChanges = useMemo(
-    () => editInitialised && !itemsEqual(items, originalItems),
-    [items, originalItems, editInitialised]
-  );
-
-  const originalPositionMap = useMemo(() => {
+const DraggableList = ({
+  items, originalItems, isSprint,
+  drivers, teams, onDragEnd, onToggleDnf,
+}: DraggableListProps) => {
+  const originalPosMap = useMemo(() => {
     const map: Record<string, number | null> = {};
-    race?.results.forEach((e) => { map[e.driverId] = e.position; });
+    originalItems.forEach((item, i) => {
+      map[item.driverId] = item.isDnf ? null : i + 1;
+    });
     return map;
-  }, [race]);
+  }, [originalItems]);
 
   const positionMap = useMemo(() => {
     const map: Record<string, number | null> = {};
@@ -189,26 +172,137 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
     return map;
   }, [items]);
 
-  // ── Actions ───────────────────────────────────────────────────────────────
+  const handleDragEnd = useCallback(({ data }: { data: RowItem[] }) => {
+    onDragEnd([...data.filter((i) => !i.isDnf), ...data.filter((i) => i.isDnf)]);
+  }, [onDragEnd]);
 
-  const toggleDnf = useCallback((driverId: string) => {
-    setItems((prev) => {
-      const updated = prev.map((item) =>
-        item.driverId === driverId ? { ...item, isDnf: !item.isDnf } : item
-      );
+  const renderItem = useCallback((params: RenderItemParams<RowItem>) => {
+    const { driverId } = params.item;
+    const driver = drivers[driverId];
+    const teamColor = teams[driver?.teamId ?? ""]?.color ?? "#888";
+    const currentPos = positionMap[driverId];
+    const originalPos = originalPosMap[driverId];
+    const isModifiedRow =
+      currentPos !== originalPos ||
+      (params.item.isDnf && originalPos !== null) ||
+      (!params.item.isDnf && originalPos === null);
+
+    // For sprint: show points cutoff separator after P8
+    const showCutoffAfter =
+      isSprint &&
+      !params.item.isDnf &&
+      currentPos === SPRINT_POINTS_CUTOFF;
+
+    return (
+      <View key={driverId}>
+        <DriverRow
+          {...params}
+          driver={driver}
+          teamColor={teamColor}
+          displayPosition={currentPos}
+          isModifiedRow={isModifiedRow}
+          onToggleDnf={onToggleDnf}
+        />
+        {showCutoffAfter && (
+          <View style={styles.cutoffSeparator}>
+            <View style={styles.cutoffLine} />
+            <Text style={styles.cutoffLabel}>No points below</Text>
+            <View style={styles.cutoffLine} />
+          </View>
+        )}
+      </View>
+    );
+  }, [drivers, teams, positionMap, originalPosMap, isSprint, onToggleDnf]);
+
+  const dnfCount = items.filter((i) => i.isDnf).length;
+
+  return (
+    <>
+      {dnfCount > 0 && (
+        <View style={styles.statsBar}>
+          <Text style={styles.statsText}>
+            {items.length - dnfCount} finishers · {dnfCount} DNF
+          </Text>
+        </View>
+      )}
+      <DraggableFlatList
+        data={items}
+        onDragEnd={handleDragEnd}
+        keyExtractor={(item) => item.driverId}
+        renderItem={renderItem}
+        containerStyle={styles.listContainer}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        activationDistance={8}
+      />
+    </>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function EditRaceScreen({ raceId, onBack }: Props) {
+  const {
+    seasonData, raceLoadStates, loadRaceResults,
+    getResultsForRace, setRaceResults, resetRace, isRaceModified,
+  } = useRaceStore();
+
+  const race = useMemo(() => seasonData?.races.find((r) => r.id === raceId), [seasonData, raceId]);
+  const drivers = seasonData?.drivers ?? {};
+  const teams = seasonData?.teams ?? {};
+  const loadState = raceLoadStates[raceId] ?? "idle";
+  const isLoaded = loadState === "loaded";
+  const hasError = loadState === "error";
+  const modified = isRaceModified(raceId);
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>("race");
+  const [raceItems, setRaceItems] = useState<RowItem[]>([]);
+  const [sprintItems, setSprintItems] = useState<RowItem[]>([]);
+  const [editInitialised, setEditInitialised] = useState(false);
+
+  useEffect(() => { loadRaceResults(raceId); }, [raceId]);
+
+  useEffect(() => {
+    if (isLoaded && !editInitialised) {
+      const results = getResultsForRace(raceId);
+      setRaceItems(buildRaceItems(results));
+      setSprintItems(buildSprintItems(results));
+      setEditInitialised(true);
+    }
+  }, [isLoaded, editInitialised, raceId, getResultsForRace]);
+
+  const originalRaceItems = useMemo(() => buildRaceItems(race?.results ?? []), [race]);
+  const originalSprintItems = useMemo(() => buildSprintItems(race?.results ?? []), [race]);
+
+  const hasUnsavedChanges = useMemo(() =>
+    editInitialised && (
+      !itemsEqual(raceItems, originalRaceItems) ||
+      !itemsEqual(sprintItems, originalSprintItems)
+    ),
+    [raceItems, sprintItems, originalRaceItems, originalSprintItems, editInitialised]
+  );
+
+  const toggleRaceDnf = useCallback((driverId: string) => {
+    setRaceItems((prev) => {
+      const updated = prev.map((i) => i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i);
       return [...updated.filter((i) => !i.isDnf), ...updated.filter((i) => i.isDnf)];
     });
   }, []);
 
-  const handleDragEnd = useCallback(({ data }: { data: RowItem[] }) => {
-    setItems([...data.filter((i) => !i.isDnf), ...data.filter((i) => i.isDnf)]);
+  const toggleSprintDnf = useCallback((driverId: string) => {
+    setSprintItems((prev) => {
+      const updated = prev.map((i) => i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i);
+      return [...updated.filter((i) => !i.isDnf), ...updated.filter((i) => i.isDnf)];
+    });
   }, []);
 
   const handleSave = useCallback(() => {
     if (!race) return;
-    setRaceResults(raceId, buildResultsFromItems(items, race.results));
+    setRaceResults(raceId, buildResultsFromItems(raceItems, sprintItems, race.results));
     onBack();
-  }, [items, race, raceId, setRaceResults, onBack]);
+  }, [raceItems, sprintItems, race, raceId, setRaceResults, onBack]);
 
   const handleReset = useCallback(() => {
     Alert.alert("Reset race", "Restore original results for this race?", [
@@ -217,7 +311,9 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
         text: "Reset", style: "destructive",
         onPress: () => {
           resetRace(raceId);
-          setItems(buildInitialItems(race?.results ?? []));
+          const original = race?.results ?? [];
+          setRaceItems(buildRaceItems(original));
+          setSprintItems(buildSprintItems(original));
         },
       },
     ]);
@@ -234,34 +330,7 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
     }
   }, [hasUnsavedChanges, onBack]);
 
-  const renderItem = useCallback((params: RenderItemParams<RowItem>) => {
-    const { driverId } = params.item;
-    const driver = drivers[driverId];
-    const teamColor = teams[driver?.teamId ?? ""]?.color ?? "#888";
-    const currentPos = positionMap[driverId];
-    const originalPos = originalPositionMap[driverId];
-    const isModifiedRow =
-      currentPos !== originalPos ||
-      (params.item.isDnf && originalPos !== null) ||
-      (!params.item.isDnf && originalPos === null);
-
-    return (
-      <DriverRow
-        {...params}
-        driver={driver}
-        teamColor={teamColor}
-        displayPosition={currentPos}
-        isModifiedRow={isModifiedRow}
-        onToggleDnf={toggleDnf}
-      />
-    );
-  }, [drivers, teams, positionMap, originalPositionMap, toggleDnf]);
-
-  const dnfCount = items.filter((i) => i.isDnf).length;
-
   if (!race) return null;
-
-  // ── JSX ───────────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={styles.container}>
@@ -285,74 +354,94 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
         )}
       </View>
 
-      {/* Info bar */}
-      <View style={styles.infoBar}>
-        <Text style={styles.infoText}>
-          Hold <Text style={styles.infoHighlight}>⠿</Text> to drag · tap DNF to retire
-        </Text>
-        {race.hasSprint && (
-          <View style={styles.sprintBadge}>
-            <Text style={styles.sprintText}>SPRINT</Text>
-          </View>
-        )}
-      </View>
+      {/* Tabs — only for sprint weekends */}
+      {race.hasSprint && isLoaded && (
+        <View style={styles.tabs}>
+          {(["race", "sprint"] as ActiveTab[]).map((tab) => (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.tab, activeTab === tab && styles.tabActive]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
-      {/* Loading state */}
-      {(isLoading || !isLoaded) && !hasError && (
+      {/* Info bar */}
+      {isLoaded && (
+        <View style={styles.infoBar}>
+          <Text style={styles.infoText}>
+            Hold <Text style={styles.infoHighlight}>⠿</Text> to drag · tap DNF to retire
+          </Text>
+          {activeTab === "sprint" && (
+            <View style={styles.sprintPointsBadge}>
+              <Text style={styles.sprintPointsText}>Top 8 score</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Loading */}
+      {!isLoaded && !hasError && (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={COLORS.red} />
           <Text style={styles.loadingText}>Loading results...</Text>
         </View>
       )}
 
-      {/* Error state */}
+      {/* Error */}
       {hasError && (
         <View style={styles.centered}>
           <Text style={styles.errorText}>Failed to load results</Text>
-          <TouchableOpacity
-            style={styles.retryBtn}
-            onPress={() => loadRaceResults(raceId)}
-          >
+          <TouchableOpacity style={styles.retryBtn} onPress={() => loadRaceResults(raceId)}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Driver list */}
+      {/* Race tab */}
+      {isLoaded && activeTab === "race" && (
+        <DraggableList
+          items={raceItems}
+          originalItems={originalRaceItems}
+          isSprint={false}
+          drivers={drivers}
+          teams={teams}
+          onDragEnd={setRaceItems}
+          onToggleDnf={toggleRaceDnf}
+        />
+      )}
+
+      {/* Sprint tab */}
+      {isLoaded && activeTab === "sprint" && (
+        <DraggableList
+          items={sprintItems}
+          originalItems={originalSprintItems}
+          isSprint={true}
+          drivers={drivers}
+          teams={teams}
+          onDragEnd={setSprintItems}
+          onToggleDnf={toggleSprintDnf}
+        />
+      )}
+
+      {/* Footer */}
       {isLoaded && (
-        <>
-          {dnfCount > 0 && (
-            <View style={styles.statsBar}>
-              <Text style={styles.statsText}>{20 - dnfCount} finishers · {dnfCount} DNF</Text>
-            </View>
-          )}
-
-          <NestableScrollContainer
-            style={styles.scrollContainer}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={[styles.saveBtn, !hasUnsavedChanges && styles.saveBtnDisabled]}
+            onPress={handleSave}
+            disabled={!hasUnsavedChanges}
           >
-            <NestableDraggableFlatList
-              data={items}
-              onDragEnd={handleDragEnd}
-              keyExtractor={(item) => item.driverId}
-              renderItem={renderItem}
-              activationDistance={8}
-            />
-          </NestableScrollContainer>
-
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.saveBtn, !hasUnsavedChanges && styles.saveBtnDisabled]}
-              onPress={handleSave}
-              disabled={!hasUnsavedChanges}
-            >
-              <Text style={styles.saveBtnText}>
-                {hasUnsavedChanges ? "Save changes" : "No changes"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </>
+            <Text style={styles.saveBtnText}>
+              {hasUnsavedChanges ? "Save changes" : "No changes"}
+            </Text>
+          </TouchableOpacity>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -389,21 +478,25 @@ const styles = StyleSheet.create({
   headerSpacer:         { minWidth: 60 },
   resetBtn:             { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: COLORS.yellow, minWidth: 60, alignItems: "center" },
   resetBtnText:         { color: COLORS.yellow, fontSize: 12, fontWeight: "600" },
-  infoBar:              { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  tabs:                 { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  tab:                  { flex: 1, paddingVertical: 10, alignItems: "center" },
+  tabActive:            { borderBottomWidth: 2, borderBottomColor: COLORS.red },
+  tabText:              { color: COLORS.grey, fontSize: 13, fontWeight: "600" },
+  tabTextActive:        { color: COLORS.white },
+  infoBar:              { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   infoText:             { color: COLORS.grey, fontSize: 11, flex: 1 },
   infoHighlight:        { color: COLORS.white, fontSize: 13 },
-  sprintBadge:          { backgroundColor: "#00bfff22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.sprint, marginLeft: 8 },
-  sprintText:           { color: COLORS.sprint, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
-  centered:             { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  loadingText:          { color: COLORS.grey, fontSize: 13 },
-  errorText:            { color: COLORS.white, fontSize: 15, fontWeight: "700" },
-  retryBtn:             { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: COLORS.red, borderRadius: 8 },
-  retryText:            { color: COLORS.white, fontWeight: "700", fontSize: 13 },
+  sprintPointsBadge:    { backgroundColor: COLORS.sprint + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.sprint },
+  sprintPointsText:     { color: COLORS.sprint, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   statsBar:             { paddingHorizontal: 14, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   statsText:            { color: COLORS.grey, fontSize: 11 },
-  scrollContainer:      { flex: 1 },
-  listContent:          { padding: 10, paddingBottom: 24 },
-  row:                  { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.surface, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, overflow: "hidden", height: 56, marginBottom: 5 },
+  // Points cutoff separator for sprint (appears after P8)
+  cutoffSeparator:      { flexDirection: "row", alignItems: "center", marginHorizontal: 10, marginTop: 4, marginBottom: 2, gap: 6 },
+  cutoffLine:           { flex: 1, height: 1, backgroundColor: COLORS.greyLight },
+  cutoffLabel:          { color: COLORS.grey, fontSize: 10, fontWeight: "600" },
+  listContainer:        { flex: 1 },
+  listContent:          { paddingHorizontal: 10, paddingBottom: 24 },
+  row:                  { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.surface, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, overflow: "hidden", height: 56, marginTop: 5 },
   rowDnf:               { backgroundColor: COLORS.dnf, borderColor: COLORS.dnfBorder, opacity: 0.75 },
   rowModified:          { borderColor: COLORS.yellow, backgroundColor: COLORS.surfaceModified },
   rowActive:            { backgroundColor: COLORS.surfaceActive, borderColor: COLORS.white, shadowColor: COLORS.white, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 8 },
@@ -422,6 +515,11 @@ const styles = StyleSheet.create({
   dragHandle:           { paddingHorizontal: 10, paddingVertical: 8, alignItems: "center", justifyContent: "center" },
   dragHandleIcon:       { color: COLORS.grey, fontSize: 20, lineHeight: 22 },
   dragHandlePlaceholder:{ width: 40 },
+  centered:             { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadingText:          { color: COLORS.grey, fontSize: 13 },
+  errorText:            { color: COLORS.white, fontSize: 15, fontWeight: "700" },
+  retryBtn:             { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: COLORS.red, borderRadius: 8 },
+  retryText:            { color: COLORS.white, fontWeight: "700", fontSize: 13 },
   footer:               { padding: 12, borderTopWidth: 1, borderTopColor: COLORS.border },
   saveBtn:              { backgroundColor: COLORS.red, borderRadius: 10, paddingVertical: 14, alignItems: "center" },
   saveBtnDisabled:      { backgroundColor: COLORS.greyLight },

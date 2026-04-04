@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -9,11 +9,6 @@ import {
   StatusBar,
 } from "react-native";
 import { useRaceStore } from "../store/useRaceStore";
-import type { DriverStanding, ConstructorStanding } from "../utils/scoring";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
 
 type Tab = "drivers" | "constructors";
 type Props = { onBack: () => void };
@@ -42,129 +37,19 @@ function getDeltaColor(delta: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRIVER ROW
-// ─────────────────────────────────────────────────────────────────────────────
-
-type DriverRowProps = {
-  standing: DriverStanding;
-  originalPosition: number;
-  isModified: boolean;
-  driverName: string;
-  driverShort: string;
-  driverFlag: string;
-  teamName: string;
-  teamColor: string;
-};
-
-const DriverRow = ({
-  standing, originalPosition, isModified,
-  driverName, driverShort, driverFlag,
-  teamColor,
-}: DriverRowProps) => {
-  const delta = originalPosition - standing.position;
-  const isChampion = standing.position === 1;
-
-  return (
-    <View style={[styles.row, isChampion && styles.rowChampion]}>
-      <View style={styles.positionWrap}>
-        <Text style={[styles.positionText, { color: getMedalColor(standing.position) }]}>
-          {standing.position}
-        </Text>
-      </View>
-
-      <View style={[styles.teamBar, { backgroundColor: teamColor }]} />
-
-      <View style={styles.entityInfo}>
-        <Text style={styles.flag}>{driverFlag}</Text>
-        <View>
-          <Text style={styles.shortName}>{driverShort}</Text>
-          <Text style={styles.fullName} numberOfLines={1}>{driverName}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.winsText}>{standing.wins > 0 ? `${standing.wins}W` : ""}</Text>
-
-      <Text style={[styles.pointsText, isChampion && styles.pointsChampion]}>
-        {standing.points}
-      </Text>
-
-      {isModified && (
-        <View style={styles.deltaWrap}>
-          <Text style={[styles.deltaText, { color: getDeltaColor(delta) }]}>
-            {getDeltaLabel(delta)}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTRUCTOR ROW
-// ─────────────────────────────────────────────────────────────────────────────
-
-type ConstructorRowProps = {
-  standing: ConstructorStanding;
-  originalPosition: number;
-  isModified: boolean;
-  teamName: string;
-  teamColor: string;
-  driverShorts: string;
-};
-
-const ConstructorRow = ({
-  standing, originalPosition, isModified,
-  teamName, teamColor, driverShorts,
-}: ConstructorRowProps) => {
-  const delta = originalPosition - standing.position;
-  const isChampion = standing.position === 1;
-
-  return (
-    <View style={[styles.row, isChampion && styles.rowChampion]}>
-      <View style={styles.positionWrap}>
-        <Text style={[styles.positionText, { color: getMedalColor(standing.position) }]}>
-          {standing.position}
-        </Text>
-      </View>
-
-      <View style={[styles.teamBar, { backgroundColor: teamColor }]} />
-
-      <View style={styles.entityInfo}>
-        <View style={[styles.teamDot, { backgroundColor: teamColor }]} />
-        <View>
-          <Text style={styles.shortName}>{teamName}</Text>
-          <Text style={styles.fullName}>{driverShorts}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.winsText}>{standing.wins > 0 ? `${standing.wins}W` : ""}</Text>
-
-      <Text style={[styles.pointsText, isChampion && styles.pointsChampion]}>
-        {standing.points}
-      </Text>
-
-      {isModified && (
-        <View style={styles.deltaWrap}>
-          <Text style={[styles.deltaText, { color: getDeltaColor(delta) }]}>
-            {getDeltaLabel(delta)}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function StandingsScreen({ onBack }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("drivers");
+
   const {
     seasonData,
-    driverStandings,
-    constructorStandings,
     overrides,
+    apiDriverStandings,
+    apiConstructorStandings,
+    localDriverStandings,
+    localConstructorStandings,
   } = useRaceStore();
 
   const drivers = seasonData?.drivers ?? {};
@@ -172,22 +57,17 @@ export default function StandingsScreen({ onBack }: Props) {
   const isModified = Object.keys(overrides).length > 0;
   const modifiedCount = Object.keys(overrides).length;
 
-  // Build original position maps (standings without any overrides)
-  // We approximate "original" by sorting the actual API data points —
-  // since we don't recompute here, we use the current standings order
-  // as a baseline and track deltas from position 1..n of the current list.
-  // For a true original we'd need a separate calculateStandings() call,
-  // but to keep it simple we store the pre-modification order on first render.
-  const originalDriverOrder = useMemo(
-    () => Object.fromEntries(driverStandings.map((s) => [s.driverId, s.position])),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [] // intentionally computed once on mount = "original" before user changes
-  );
+  // Use local (recalculated) standings when overrides are active,
+  // otherwise show the official API standings
+  const driverStandings = isModified ? localDriverStandings : apiDriverStandings;
+  const constructorStandings = isModified ? localConstructorStandings : apiConstructorStandings;
 
-  const originalConstructorOrder = useMemo(
-    () => Object.fromEntries(constructorStandings.map((s) => [s.teamId, s.position])),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+  // For the delta column: compare current position against the API standings
+  const apiDriverPositions = Object.fromEntries(
+    apiDriverStandings.map((s) => [s.driverId, s.position])
+  );
+  const apiConstructorPositions = Object.fromEntries(
+    apiConstructorStandings.map((s) => [s.teamId, s.position])
   );
 
   return (
@@ -231,8 +111,8 @@ export default function StandingsScreen({ onBack }: Props) {
 
       {/* Column headers */}
       <View style={styles.columnHeaders}>
-        <Text style={[styles.columnLabel, { width: 32 }]}>POS</Text>
-        <Text style={[styles.columnLabel, { flex: 1, marginLeft: 16 }]}>
+        <Text style={[styles.columnLabel, { width: 36 }]}>POS</Text>
+        <Text style={[styles.columnLabel, { flex: 1, marginLeft: 14 }]}>
           {activeTab === "drivers" ? "DRIVER" : "TEAM"}
         </Text>
         <Text style={[styles.columnLabel, { width: 32, textAlign: "right" }]}>W</Text>
@@ -242,44 +122,83 @@ export default function StandingsScreen({ onBack }: Props) {
         )}
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         {activeTab === "drivers"
           ? driverStandings.map((s) => {
               const driver = drivers[s.driverId];
-              const team = teams[driver?.teamId ?? ""];
+              const team = teams[driver?.teamId ?? ""] ?? teams[s.teamId ?? ""];
+              const isChampion = s.position === 1;
+              const delta = isModified
+                ? (apiDriverPositions[s.driverId] ?? s.position) - s.position
+                : 0;
+
               return (
-                <DriverRow
-                  key={s.driverId}
-                  standing={s}
-                  originalPosition={originalDriverOrder[s.driverId] ?? s.position}
-                  isModified={isModified}
-                  driverName={driver?.name ?? s.driverId}
-                  driverShort={driver?.short ?? "???"}
-                  driverFlag={driver?.flag ?? "🏁"}
-                  teamName={team?.name ?? ""}
-                  teamColor={team?.color ?? "#888"}
-                />
+                <View key={s.driverId} style={[styles.row, isChampion && styles.rowChampion]}>
+                  <View style={styles.positionWrap}>
+                    <Text style={[styles.positionText, { color: getMedalColor(s.position) }]}>
+                      {s.position}
+                    </Text>
+                  </View>
+                  <View style={[styles.teamBar, { backgroundColor: team?.color ?? "#888" }]} />
+                  <View style={styles.entityInfo}>
+                    <Text style={styles.flag}>{driver?.flag ?? "🏁"}</Text>
+                    <View>
+                      <Text style={styles.shortName}>{driver?.short ?? s.driverId}</Text>
+                      <Text style={styles.fullName} numberOfLines={1}>{driver?.name ?? ""}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.winsText}>{s.wins > 0 ? `${s.wins}W` : ""}</Text>
+                  <Text style={[styles.pointsText, isChampion && styles.pointsChampion]}>
+                    {s.points}
+                  </Text>
+                  {isModified && (
+                    <View style={styles.deltaWrap}>
+                      <Text style={[styles.deltaText, { color: getDeltaColor(delta) }]}>
+                        {getDeltaLabel(delta)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               );
             })
           : constructorStandings.map((s) => {
               const team = teams[s.teamId];
+              const isChampion = s.position === 1;
               const driverShorts = (team?.driverIds ?? [])
                 .map((id) => drivers[id]?.short ?? "")
                 .filter(Boolean)
                 .join(" · ");
+              const delta = isModified
+                ? (apiConstructorPositions[s.teamId] ?? s.position) - s.position
+                : 0;
+
               return (
-                <ConstructorRow
-                  key={s.teamId}
-                  standing={s}
-                  originalPosition={originalConstructorOrder[s.teamId] ?? s.position}
-                  isModified={isModified}
-                  teamName={team?.name ?? s.teamId}
-                  teamColor={team?.color ?? "#888"}
-                  driverShorts={driverShorts}
-                />
+                <View key={s.teamId} style={[styles.row, isChampion && styles.rowChampion]}>
+                  <View style={styles.positionWrap}>
+                    <Text style={[styles.positionText, { color: getMedalColor(s.position) }]}>
+                      {s.position}
+                    </Text>
+                  </View>
+                  <View style={[styles.teamBar, { backgroundColor: team?.color ?? "#888" }]} />
+                  <View style={styles.entityInfo}>
+                    <View style={[styles.teamDot, { backgroundColor: team?.color ?? "#888" }]} />
+                    <View>
+                      <Text style={styles.shortName}>{team?.name ?? s.teamId}</Text>
+                      <Text style={styles.fullName}>{driverShorts}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.winsText}>{s.wins > 0 ? `${s.wins}W` : ""}</Text>
+                  <Text style={[styles.pointsText, isChampion && styles.pointsChampion]}>
+                    {s.points}
+                  </Text>
+                  {isModified && (
+                    <View style={styles.deltaWrap}>
+                      <Text style={[styles.deltaText, { color: getDeltaColor(delta) }]}>
+                        {getDeltaLabel(delta)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               );
             })}
       </ScrollView>

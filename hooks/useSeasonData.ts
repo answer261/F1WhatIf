@@ -9,7 +9,7 @@ import type { SeasonData } from "../data/f1-constants";
 
 // Only caches the calendar skeleton (no results).
 // Results are cached separately per-race inside the store.
-const CACHE_KEY = "f1_calendar_2025_v1";
+const CACHE_KEY = "f1_calendar_2025_v4";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 type CacheEntry = {

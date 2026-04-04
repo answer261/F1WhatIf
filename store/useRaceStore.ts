@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { fetchRaceResults } from "../services/jolpica";
 import type { SeasonData, RaceEntry } from "../data/f1-constants";
+import type { ApiDriverStanding, ApiConstructorStanding } from "../services/jolpica";
 import {
-  calculateStandings,
+  applyOverridesToStandings,
   type RaceOverrides,
   type DriverStanding,
   type ConstructorStanding,
@@ -18,15 +19,23 @@ export type StoreState = {
   seasonData: SeasonData | null;
   isSeasonLoaded: boolean;
 
-  // Per-race result loading
+  apiDriverStandings: ApiDriverStanding[];
+  apiConstructorStandings: ApiConstructorStanding[];
+
+  localDriverStandings: DriverStanding[];
+  localConstructorStandings: ConstructorStanding[];
+
   raceLoadStates: Record<number, RaceLoadState>;
-
   overrides: RaceOverrides;
-  driverStandings: DriverStanding[];
-  constructorStandings: ConstructorStanding[];
 
-  // Actions
-  loadSeason: (data: SeasonData) => void;
+  // driverId → teamId, populated as races are loaded
+  driverTeamMap: Record<string, string>;
+
+  loadSeason: (
+    data: SeasonData,
+    driverStandings: ApiDriverStanding[],
+    constructorStandings: ApiConstructorStanding[]
+  ) => void;
   loadRaceResults: (raceId: number) => Promise<void>;
   setRaceResults: (raceId: number, results: RaceEntry[]) => void;
   resetRace: (raceId: number) => void;
@@ -37,25 +46,63 @@ export type StoreState = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function recalculate(
+  state: Pick<
+    StoreState,
+    | "seasonData"
+    | "apiDriverStandings"
+    | "apiConstructorStandings"
+    | "overrides"
+    | "driverTeamMap"
+  >
+): { drivers: DriverStanding[]; constructors: ConstructorStanding[] } {
+  if (!state.seasonData) return { drivers: [], constructors: [] };
+  return applyOverridesToStandings(
+    state.apiDriverStandings,
+    state.apiConstructorStandings,
+    state.overrides,
+    state.seasonData.races,
+    state.driverTeamMap
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STORE
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const useRaceStore = create<StoreState>((set, get) => ({
   seasonData: null,
   isSeasonLoaded: false,
+  apiDriverStandings: [],
+  apiConstructorStandings: [],
+  localDriverStandings: [],
+  localConstructorStandings: [],
   raceLoadStates: {},
   overrides: {},
-  driverStandings: [],
-  constructorStandings: [],
+  driverTeamMap: {},
 
-  loadSeason: (data) => {
-    // Standings are empty until results are loaded — that's fine,
-    // the standings screen will reflect whatever has been loaded so far.
+  loadSeason: (data, driverStandings, constructorStandings) => {
+    const safeDriverStandings = driverStandings ?? [];
+    const safeConstructorStandings = constructorStandings ?? [];
+
+    const driverTeamMap: Record<string, string> = {};
+    for (const s of safeDriverStandings) {
+      if (s?.driverId && s?.teamId) {
+        driverTeamMap[s.driverId] = s.teamId;
+      }
+    }
+
     set({
       seasonData: data,
       isSeasonLoaded: true,
-      driverStandings: [],
-      constructorStandings: [],
+      apiDriverStandings: safeDriverStandings,
+      apiConstructorStandings: safeConstructorStandings,
+      driverTeamMap,
+      localDriverStandings: [],
+      localConstructorStandings: [],
     });
   },
 
@@ -63,7 +110,6 @@ export const useRaceStore = create<StoreState>((set, get) => ({
     const { seasonData, raceLoadStates } = get();
     if (!seasonData) return;
 
-    // Skip if already loaded or currently loading
     const state = raceLoadStates[raceId];
     if (state === "loaded" || state === "loading") return;
 
@@ -75,48 +121,43 @@ export const useRaceStore = create<StoreState>((set, get) => ({
     }));
 
     try {
-      const { results, driverTeams } = await fetchRaceResults(
-        raceId,
-        race.hasSprint
-      );
+      const { results, driverTeams } = await fetchRaceResults(raceId, race.hasSprint);
 
       // Patch race results into seasonData
       const updatedRaces = seasonData.races.map((r) =>
         r.id === raceId ? { ...r, results } : r
       );
 
-      // Patch driver teamIds from results (most reliable source)
-      const updatedDrivers = { ...seasonData.drivers };
-      for (const [driverId, teamId] of Object.entries(driverTeams)) {
-        if (updatedDrivers[driverId]) {
-          updatedDrivers[driverId] = { ...updatedDrivers[driverId], teamId };
-        }
-        // Add driver to team's driverIds
-        const teams = seasonData.teams;
-        if (teams[teamId] && !teams[teamId].driverIds.includes(driverId)) {
-          teams[teamId] = {
-            ...teams[teamId],
-            driverIds: [...teams[teamId].driverIds, driverId],
-          };
-        }
+      const updatedSeasonData: SeasonData = { ...seasonData, races: updatedRaces };
+
+      // Merge new driver→team mappings
+      const updatedDriverTeamMap = { ...get().driverTeamMap, ...driverTeams };
+
+      // If overrides are active, recalculate standings now that we have
+      // the original results for this race available
+      const { overrides, apiDriverStandings, apiConstructorStandings } = get();
+      const hasOverrides = Object.keys(overrides).length > 0;
+
+      let localDriverStandings = get().localDriverStandings;
+      let localConstructorStandings = get().localConstructorStandings;
+
+      if (hasOverrides) {
+        const { drivers, constructors } = applyOverridesToStandings(
+          apiDriverStandings,
+          apiConstructorStandings,
+          overrides,
+          updatedSeasonData.races,
+          updatedDriverTeamMap
+        );
+        localDriverStandings = drivers;
+        localConstructorStandings = constructors;
       }
-
-      const updatedSeasonData: SeasonData = {
-        ...seasonData,
-        races: updatedRaces,
-        drivers: updatedDrivers,
-      };
-
-      const { overrides } = get();
-      const { drivers, constructors } = calculateStandings(
-        updatedSeasonData,
-        overrides
-      );
 
       set({
         seasonData: updatedSeasonData,
-        driverStandings: drivers,
-        constructorStandings: constructors,
+        driverTeamMap: updatedDriverTeamMap,
+        localDriverStandings,
+        localConstructorStandings,
         raceLoadStates: { ...get().raceLoadStates, [raceId]: "loaded" },
       });
     } catch (err) {
@@ -128,31 +169,35 @@ export const useRaceStore = create<StoreState>((set, get) => ({
   },
 
   setRaceResults: (raceId, results) => {
-    const { seasonData } = get();
-    if (!seasonData) return;
-    const overrides = { ...get().overrides, [raceId]: results };
-    const { drivers, constructors } = calculateStandings(seasonData, overrides);
-    set({ overrides, driverStandings: drivers, constructorStandings: constructors });
+    const current = get();
+    if (!current.seasonData) return;
+
+    const overrides = { ...current.overrides, [raceId]: results };
+    const { drivers, constructors } = recalculate({ ...current, overrides });
+    set({ overrides, localDriverStandings: drivers, localConstructorStandings: constructors });
   },
 
   resetRace: (raceId) => {
-    const { seasonData } = get();
-    if (!seasonData) return;
-    const overrides = { ...get().overrides };
+    const current = get();
+    if (!current.seasonData) return;
+
+    const overrides = { ...current.overrides };
     delete overrides[raceId];
-    const { drivers, constructors } = calculateStandings(seasonData, overrides);
-    set({ overrides, driverStandings: drivers, constructorStandings: constructors });
+
+    if (Object.keys(overrides).length === 0) {
+      set({ overrides, localDriverStandings: [], localConstructorStandings: [] });
+      return;
+    }
+
+    const { drivers, constructors } = recalculate({ ...current, overrides });
+    set({ overrides, localDriverStandings: drivers, localConstructorStandings: constructors });
   },
 
   resetAll: () => {
-    const { seasonData } = get();
-    if (!seasonData) return;
-    const { drivers, constructors } = calculateStandings(seasonData, {});
-    set({ overrides: {}, driverStandings: drivers, constructorStandings: constructors });
+    set({ overrides: {}, localDriverStandings: [], localConstructorStandings: [] });
   },
 
   isRaceModified: (raceId) => raceId in get().overrides,
-
   isRaceResultsLoaded: (raceId) => get().raceLoadStates[raceId] === "loaded",
 
   getResultsForRace: (raceId) => {

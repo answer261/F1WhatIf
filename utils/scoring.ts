@@ -1,9 +1,13 @@
 import {
   getRacePoints,
   getSprintPoints,
-  type SeasonData,
   type RaceEntry,
+  type Race,
 } from "../data/f1-constants";
+import type {
+  ApiDriverStanding,
+  ApiConstructorStanding,
+} from "../services/jolpica";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -27,92 +31,139 @@ export type ConstructorStanding = {
 export type RaceOverrides = Record<number, RaceEntry[]>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CORE
+// DELTA-BASED RECALCULATION
+//
+// Strategy: start from the official API standings, then for each overridden
+// race compute the points difference between the original and modified result
+// and apply it as a delta. This means we never need all 24 races loaded.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function calculateStandings(
-  seasonData: SeasonData | null | undefined,
-  overrides: RaceOverrides = {}
+export function applyOverridesToStandings(
+  apiDriverStandings: ApiDriverStanding[],
+  apiConstructorStandings: ApiConstructorStanding[],
+  overrides: RaceOverrides,
+  races: Race[], // only needs results for overridden races (already loaded)
+  driverTeamMap: Record<string, string> // driverId → teamId
 ): {
   drivers: DriverStanding[];
   constructors: ConstructorStanding[];
 } {
-  const drivers = seasonData?.drivers ?? {};
-  const teams = seasonData?.teams ?? {};
-  const races = seasonData?.races ?? [];
+  // Start with a mutable copy of API standings
+  const driverPoints = new Map<string, number>(
+    apiDriverStandings.map((s) => [s.driverId, s.points])
+  );
+  const driverWins = new Map<string, number>(
+    apiDriverStandings.map((s) => [s.driverId, s.wins])
+  );
+  const driverTeamId = new Map<string, string>(
+    apiDriverStandings.map((s) => [s.driverId, s.teamId])
+  );
 
-  const driverPoints = new Map<string, number>();
-  const driverWins = new Map<string, number>();
-  const constructorPoints = new Map<string, number>();
-  const constructorWins = new Map<string, number>();
+  const constructorPoints = new Map<string, number>(
+    apiConstructorStandings.map((s) => [s.teamId, s.points])
+  );
+  const constructorWins = new Map<string, number>(
+    apiConstructorStandings.map((s) => [s.teamId, s.wins])
+  );
 
-  // Initialise
-  for (const id of Object.keys(drivers)) {
-    driverPoints.set(id, 0);
-    driverWins.set(id, 0);
+  // Also include any drivers from driverTeamMap not in API standings
+  // (edge case: new drivers mid-season)
+  for (const [driverId, teamId] of Object.entries(driverTeamMap)) {
+    if (!driverTeamId.has(driverId)) {
+      driverTeamId.set(driverId, teamId);
+      driverPoints.set(driverId, 0);
+      driverWins.set(driverId, 0);
+    }
   }
-  for (const id of Object.keys(teams)) {
-    constructorPoints.set(id, 0);
-    constructorWins.set(id, 0);
-  }
 
-  for (const race of races) {
-    const results: RaceEntry[] = overrides[race.id] ?? race.results;
+  for (const [raceId, newResults] of Object.entries(overrides)) {
+    const race = races.find((r) => r.id === parseInt(raceId, 10));
+    if (!race) continue;
 
-    for (const entry of results) {
-      const { driverId, position, sprintPosition } = entry;
-      const driver = drivers[driverId];
-      if (!driver) continue;
+    const originalResults = race.results;
+    const hasSprint = race.hasSprint;
 
-      const teamId = driver.teamId;
+    // Build original points map for this race
+    const originalPointsMap = buildRacePointsMap(originalResults, hasSprint);
 
-      // Race points
-      const rp = getRacePoints(position);
-      driverPoints.set(driverId, (driverPoints.get(driverId) ?? 0) + rp);
-      constructorPoints.set(teamId, (constructorPoints.get(teamId) ?? 0) + rp);
+    // Build new points map for this race
+    const newPointsMap = buildRacePointsMap(newResults, hasSprint);
 
-      // Sprint points
-      if (race.hasSprint && sprintPosition !== undefined) {
-        const sp = getSprintPoints(sprintPosition);
-        driverPoints.set(driverId, (driverPoints.get(driverId) ?? 0) + sp);
-        constructorPoints.set(teamId, (constructorPoints.get(teamId) ?? 0) + sp);
-      }
+    // Collect all driverIds across both result sets
+    const allDriverIds = new Set([
+      ...originalPointsMap.keys(),
+      ...newPointsMap.keys(),
+    ]);
 
-      // Wins
-      if (position === 1) {
-        driverWins.set(driverId, (driverWins.get(driverId) ?? 0) + 1);
-        constructorWins.set(teamId, (constructorWins.get(teamId) ?? 0) + 1);
+    for (const driverId of allDriverIds) {
+      const orig = originalPointsMap.get(driverId) ?? { points: 0, wins: 0 };
+      const next = newPointsMap.get(driverId) ?? { points: 0, wins: 0 };
+
+      const pointsDelta = next.points - orig.points;
+      const winsDelta = next.wins - orig.wins;
+
+      if (pointsDelta === 0 && winsDelta === 0) continue;
+
+      // Apply delta to driver
+      driverPoints.set(driverId, (driverPoints.get(driverId) ?? 0) + pointsDelta);
+      driverWins.set(driverId, (driverWins.get(driverId) ?? 0) + winsDelta);
+
+      // Apply delta to constructor
+      const teamId = driverTeamId.get(driverId) ?? driverTeamMap[driverId] ?? "";
+      if (teamId) {
+        constructorPoints.set(teamId, (constructorPoints.get(teamId) ?? 0) + pointsDelta);
+        constructorWins.set(teamId, (constructorWins.get(teamId) ?? 0) + winsDelta);
       }
     }
   }
 
-  const driverStandings: DriverStanding[] = Object.keys(drivers).flatMap(
-    (driverId) => {
-      const driver = drivers[driverId];
-      if (!driver) return [];
-      return [
-        {
-          driverId,
-          points: driverPoints.get(driverId) ?? 0,
-          wins: driverWins.get(driverId) ?? 0,
-          teamId: driver.teamId,
-          position: 0,
-        },
-      ];
-    }
-  )
+  // Sort and assign positions
+  const drivers: DriverStanding[] = Array.from(driverPoints.entries())
+    .map(([driverId, points]) => ({
+      driverId,
+      points,
+      wins: driverWins.get(driverId) ?? 0,
+      teamId: driverTeamId.get(driverId) ?? "",
+      position: 0,
+    }))
     .sort((a, b) => b.points - a.points || b.wins - a.wins)
-    .map((entry, i) => ({ ...entry, position: i + 1 }));
+    .map((s, i) => ({ ...s, position: i + 1 }));
 
-  const constructorStandings: ConstructorStanding[] = Object.keys(teams)
-    .map((teamId) => ({
+  const constructors: ConstructorStanding[] = Array.from(constructorPoints.entries())
+    .map(([teamId, points]) => ({
       teamId,
-      points: constructorPoints.get(teamId) ?? 0,
+      points,
       wins: constructorWins.get(teamId) ?? 0,
       position: 0,
     }))
     .sort((a, b) => b.points - a.points || b.wins - a.wins)
-    .map((entry, i) => ({ ...entry, position: i + 1 }));
+    .map((s, i) => ({ ...s, position: i + 1 }));
 
-  return { drivers: driverStandings, constructors: constructorStandings };
+  return { drivers, constructors };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+type DriverRacePoints = { points: number; wins: number };
+
+function buildRacePointsMap(
+  results: RaceEntry[],
+  hasSprint: boolean
+): Map<string, DriverRacePoints> {
+  const map = new Map<string, DriverRacePoints>();
+
+  for (const entry of results) {
+    const racePoints = getRacePoints(entry.position);
+    const sprintPoints = hasSprint ? getSprintPoints(entry.sprintPosition) : 0;
+    const wins = entry.position === 1 ? 1 : 0;
+
+    map.set(entry.driverId, {
+      points: racePoints + sprintPoints,
+      wins,
+    });
+  }
+
+  return map;
 }
