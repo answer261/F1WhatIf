@@ -16,8 +16,6 @@ import DraggableFlatList, {
 import { useRaceStore } from "../store/useRaceStore";
 import type { RaceEntry, Driver } from "../data/f1-constants";
 
-const SPRINT_POINTS_CUTOFF = 8;
-
 type Props = { raceId: number; onBack: () => void };
 type RowItem = { driverId: string; isDnf: boolean };
 type ActiveTab = "race" | "sprint";
@@ -38,14 +36,18 @@ function buildRaceItems(entries: RaceEntry[]): RowItem[] {
 }
 
 function buildSprintItems(entries: RaceEntry[]): RowItem[] {
-  const finishers = entries
-    .filter((e) => e.sprintPosition !== null && e.sprintPosition !== undefined)
-    .sort((a, b) => (a.sprintPosition ?? 99) - (b.sprintPosition ?? 99))
+  // Jolpica only returns sprintPosition for P1-P8 (points scorers).
+  // Everyone else has null but still finished. Treat ALL as finishers:
+  //   P1-P8: sorted by sprintPosition
+  //   P9+:   sorted by main race position as a proxy
+  // DNF is only set if the user manually toggles it.
+  return [...entries]
+    .sort((a, b) => {
+      const aPos = a.sprintPosition ?? (100 + (a.position ?? 99));
+      const bPos = b.sprintPosition ?? (100 + (b.position ?? 99));
+      return aPos - bPos;
+    })
     .map((e) => ({ driverId: e.driverId, isDnf: false }));
-  const dnfs = entries
-    .filter((e) => e.sprintPosition === null || e.sprintPosition === undefined)
-    .map((e) => ({ driverId: e.driverId, isDnf: true }));
-  return [...finishers, ...dnfs];
 }
 
 function buildResultsFromItems(
@@ -68,10 +70,10 @@ function buildResultsFromItems(
   return originalEntries.map((entry) => ({
     driverId: entry.driverId,
     position: racePosMap.has(entry.driverId)
-      ? racePosMap.get(entry.driverId) ?? null
+      ? (racePosMap.get(entry.driverId) ?? null)
       : entry.position,
     sprintPosition: sprintPosMap.has(entry.driverId)
-      ? sprintPosMap.get(entry.driverId) ?? null
+      ? (sprintPosMap.get(entry.driverId) ?? null)
       : entry.sprintPosition,
   }));
 }
@@ -82,7 +84,7 @@ function itemsEqual(a: RowItem[], b: RowItem[]): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRIVER ROW — identical for both race and sprint
+// DRIVER ROW
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DriverRowProps = RenderItemParams<RowItem> & {
@@ -140,13 +142,12 @@ const DriverRow = React.memo(({
 ));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DRAGGABLE LIST
+// DRAGGABLE LIST (shared between race and sprint)
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DraggableListProps = {
   items: RowItem[];
   originalItems: RowItem[];
-  isSprint: boolean;
   drivers: Record<string, Driver>;
   teams: Record<string, any>;
   onDragEnd: (data: RowItem[]) => void;
@@ -154,7 +155,7 @@ type DraggableListProps = {
 };
 
 const DraggableList = ({
-  items, originalItems, isSprint,
+  items, originalItems,
   drivers, teams, onDragEnd, onToggleDnf,
 }: DraggableListProps) => {
   const originalPosMap = useMemo(() => {
@@ -187,32 +188,17 @@ const DraggableList = ({
       (params.item.isDnf && originalPos !== null) ||
       (!params.item.isDnf && originalPos === null);
 
-    // For sprint: show points cutoff separator after P8
-    const showCutoffAfter =
-      isSprint &&
-      !params.item.isDnf &&
-      currentPos === SPRINT_POINTS_CUTOFF;
-
     return (
-      <View key={driverId}>
-        <DriverRow
-          {...params}
-          driver={driver}
-          teamColor={teamColor}
-          displayPosition={currentPos}
-          isModifiedRow={isModifiedRow}
-          onToggleDnf={onToggleDnf}
-        />
-        {showCutoffAfter && (
-          <View style={styles.cutoffSeparator}>
-            <View style={styles.cutoffLine} />
-            <Text style={styles.cutoffLabel}>No points below</Text>
-            <View style={styles.cutoffLine} />
-          </View>
-        )}
-      </View>
+      <DriverRow
+        {...params}
+        driver={driver}
+        teamColor={teamColor}
+        displayPosition={currentPos}
+        isModifiedRow={isModifiedRow}
+        onToggleDnf={onToggleDnf}
+      />
     );
-  }, [drivers, teams, positionMap, originalPosMap, isSprint, onToggleDnf]);
+  }, [drivers, teams, positionMap, originalPosMap, onToggleDnf]);
 
   const dnfCount = items.filter((i) => i.isDnf).length;
 
@@ -377,11 +363,6 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
           <Text style={styles.infoText}>
             Hold <Text style={styles.infoHighlight}>⠿</Text> to drag · tap DNF to retire
           </Text>
-          {activeTab === "sprint" && (
-            <View style={styles.sprintPointsBadge}>
-              <Text style={styles.sprintPointsText}>Top 8 score</Text>
-            </View>
-          )}
         </View>
       )}
 
@@ -408,7 +389,6 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
         <DraggableList
           items={raceItems}
           originalItems={originalRaceItems}
-          isSprint={false}
           drivers={drivers}
           teams={teams}
           onDragEnd={setRaceItems}
@@ -421,7 +401,6 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
         <DraggableList
           items={sprintItems}
           originalItems={originalSprintItems}
-          isSprint={true}
           drivers={drivers}
           teams={teams}
           onDragEnd={setSprintItems}
@@ -462,7 +441,6 @@ const COLORS = {
   white:           "#ffffff",
   grey:            "#888888",
   greyLight:       "#444444",
-  sprint:          "#00bfff",
   dnf:             "#2a1a1a",
   dnfBorder:       "#5a2a2a",
 };
@@ -486,14 +464,8 @@ const styles = StyleSheet.create({
   infoBar:              { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   infoText:             { color: COLORS.grey, fontSize: 11, flex: 1 },
   infoHighlight:        { color: COLORS.white, fontSize: 13 },
-  sprintPointsBadge:    { backgroundColor: COLORS.sprint + "22", borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.sprint },
-  sprintPointsText:     { color: COLORS.sprint, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   statsBar:             { paddingHorizontal: 14, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   statsText:            { color: COLORS.grey, fontSize: 11 },
-  // Points cutoff separator for sprint (appears after P8)
-  cutoffSeparator:      { flexDirection: "row", alignItems: "center", marginHorizontal: 10, marginTop: 4, marginBottom: 2, gap: 6 },
-  cutoffLine:           { flex: 1, height: 1, backgroundColor: COLORS.greyLight },
-  cutoffLabel:          { color: COLORS.grey, fontSize: 10, fontWeight: "600" },
   listContainer:        { flex: 1 },
   listContent:          { paddingHorizontal: 10, paddingBottom: 24 },
   row:                  { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.surface, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, overflow: "hidden", height: 56, marginTop: 5 },
