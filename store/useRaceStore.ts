@@ -8,6 +8,7 @@ import {
   type DriverStanding,
   type ConstructorStanding,
 } from "../utils/scoring";
+import { mergeRacePayloadIntoSeason } from "../utils/mergeSeasonRaceResults";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -65,7 +66,8 @@ function recalculate(
     state.apiConstructorStandings,
     state.overrides,
     state.seasonData.races,
-    state.driverTeamMap
+    state.driverTeamMap,
+    state.seasonData.drivers
   );
 }
 
@@ -103,6 +105,8 @@ export const useRaceStore = create<StoreState>((set, get) => ({
       driverTeamMap,
       localDriverStandings: [],
       localConstructorStandings: [],
+      overrides: {},
+      raceLoadStates: {},
     });
   },
 
@@ -123,51 +127,42 @@ export const useRaceStore = create<StoreState>((set, get) => ({
     try {
       const { results, driverTeams, driversPatch } = await fetchRaceResults(raceId, race.hasSprint);
 
-      // Patch race results into seasonData
-      const updatedRaces = seasonData.races.map((r) =>
-        r.id === raceId ? { ...r, results } : r
-      );
+      set((s) => {
+        if (!s.seasonData) return s;
 
-      const mergedDrivers =
-        Object.keys(driversPatch).length > 0
-          ? { ...seasonData.drivers, ...driversPatch }
-          : seasonData.drivers;
-
-      const updatedSeasonData: SeasonData = {
-        ...seasonData,
-        races: updatedRaces,
-        drivers: mergedDrivers,
-      };
-
-      // Merge new driver→team mappings
-      const updatedDriverTeamMap = { ...get().driverTeamMap, ...driverTeams };
-
-      // If overrides are active, recalculate standings now that we have
-      // the original results for this race available
-      const { overrides, apiDriverStandings, apiConstructorStandings } = get();
-      const hasOverrides = Object.keys(overrides).length > 0;
-
-      let localDriverStandings = get().localDriverStandings;
-      let localConstructorStandings = get().localConstructorStandings;
-
-      if (hasOverrides) {
-        const { drivers, constructors } = applyOverridesToStandings(
-          apiDriverStandings,
-          apiConstructorStandings,
-          overrides,
-          updatedSeasonData.races,
-          updatedDriverTeamMap
+        const updatedSeasonData = mergeRacePayloadIntoSeason(
+          s.seasonData,
+          raceId,
+          results,
+          driversPatch
         );
-        localDriverStandings = drivers;
-        localConstructorStandings = constructors;
-      }
+        const updatedDriverTeamMap = { ...s.driverTeamMap, ...driverTeams };
+        const hasOverrides = Object.keys(s.overrides).length > 0;
 
-      set({
-        seasonData: updatedSeasonData,
-        driverTeamMap: updatedDriverTeamMap,
-        localDriverStandings,
-        localConstructorStandings,
-        raceLoadStates: { ...get().raceLoadStates, [raceId]: "loaded" },
+        let localDriverStandings = s.localDriverStandings;
+        let localConstructorStandings = s.localConstructorStandings;
+
+        if (hasOverrides) {
+          const recalced = applyOverridesToStandings(
+            s.apiDriverStandings,
+            s.apiConstructorStandings,
+            s.overrides,
+            updatedSeasonData.races,
+            updatedDriverTeamMap,
+            updatedSeasonData.drivers
+          );
+          localDriverStandings = recalced.drivers;
+          localConstructorStandings = recalced.constructors;
+        }
+
+        return {
+          ...s,
+          seasonData: updatedSeasonData,
+          driverTeamMap: updatedDriverTeamMap,
+          localDriverStandings,
+          localConstructorStandings,
+          raceLoadStates: { ...s.raceLoadStates, [raceId]: "loaded" },
+        };
       });
     } catch (err) {
       console.error(`Failed to load results for round ${raceId}:`, err);

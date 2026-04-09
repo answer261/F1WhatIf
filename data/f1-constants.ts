@@ -116,11 +116,13 @@ export const SPRINT_POINTS: Record<number, number> = {
   1: 8, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1,
 };
 
+/** F1 positions are 1-based; `0` / null / undefined mean no points (not a valid finishing position). */
 export function getRacePoints(position: number | null | undefined): number {
   if (!position) return 0;
   return RACE_POINTS[position] ?? 0;
 }
 
+/** Sprint points use grid positions 1–8 only; `0` / null / undefined → no points. */
 export function getSprintPoints(position: number | null | undefined): number {
   if (!position) return 0;
   return SPRINT_POINTS[position] ?? 0;

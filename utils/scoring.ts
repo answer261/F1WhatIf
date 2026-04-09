@@ -1,6 +1,7 @@
 import {
   getRacePoints,
   getSprintPoints,
+  type Driver,
   type RaceEntry,
   type Race,
 } from "../data/f1-constants";
@@ -43,7 +44,8 @@ export function applyOverridesToStandings(
   apiConstructorStandings: ApiConstructorStanding[],
   overrides: RaceOverrides,
   races: Race[], // only needs results for overridden races (already loaded)
-  driverTeamMap: Record<string, string> // driverId → teamId
+  driverTeamMap: Record<string, string>, // driverId → teamId (from loaded results)
+  driversById: Record<string, Driver>
 ): {
   drivers: DriverStanding[];
   constructors: ConstructorStanding[];
@@ -108,8 +110,12 @@ export function applyOverridesToStandings(
       driverPoints.set(driverId, (driverPoints.get(driverId) ?? 0) + pointsDelta);
       driverWins.set(driverId, (driverWins.get(driverId) ?? 0) + winsDelta);
 
-      // Apply delta to constructor
-      const teamId = driverTeamId.get(driverId) ?? driverTeamMap[driverId] ?? "";
+      // Apply delta to constructor (API standings may omit Constructors[]; season drivers / result patches often have teamId)
+      const teamId =
+        driverTeamId.get(driverId) ||
+        driverTeamMap[driverId] ||
+        driversById[driverId]?.teamId ||
+        "";
       if (teamId) {
         constructorPoints.set(teamId, (constructorPoints.get(teamId) ?? 0) + pointsDelta);
         constructorWins.set(teamId, (constructorWins.get(teamId) ?? 0) + winsDelta);
@@ -148,7 +154,8 @@ export function applyOverridesToStandings(
 
 type DriverRacePoints = { points: number; wins: number };
 
-function buildRacePointsMap(
+/** Exported for unit tests — maps finishing positions to points + sprint + win credit for one race. */
+export function buildRacePointsMap(
   results: RaceEntry[],
   hasSprint: boolean
 ): Map<string, DriverRacePoints> {

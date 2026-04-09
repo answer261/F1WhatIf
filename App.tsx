@@ -46,15 +46,17 @@ export default function App() {
   const seasonData = useSeasonData();
   const { loadSeason, isSeasonLoaded } = useRaceStore();
 
+  const calendarPayload =
+    seasonData.status === "success" ? seasonData.data : null;
+
   useEffect(() => {
-    if (seasonData.status === "success" && !isSeasonLoaded) {
-      loadSeason(
-        seasonData.data.seasonData,
-        seasonData.data.driverStandings,
-        seasonData.data.constructorStandings
-      );
-    }
-  }, [seasonData.status, isSeasonLoaded]);
+    if (!calendarPayload || isSeasonLoaded) return;
+    loadSeason(
+      calendarPayload.seasonData,
+      calendarPayload.driverStandings,
+      calendarPayload.constructorStandings
+    );
+  }, [calendarPayload, isSeasonLoaded, loadSeason]);
 
   return (
     <GestureHandlerRootView style={styles.root}>

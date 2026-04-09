@@ -15,7 +15,7 @@ import DraggableFlatList, {
   ScaleDecorator,
 } from "react-native-draggable-flatlist";
 import { useRaceStore } from "../store/useRaceStore";
-import type { RaceEntry, Driver } from "../data/f1-constants";
+import type { RaceEntry, Driver, Team } from "../data/f1-constants";
 
 type Props = { raceId: number; onBack: () => void };
 type RowItem = { driverId: string; isDnf: boolean };
@@ -150,7 +150,7 @@ type DraggableListProps = {
   items: RowItem[];
   originalItems: RowItem[];
   drivers: Record<string, Driver>;
-  teams: Record<string, any>;
+  teams: Record<string, Team>;
   onDragEnd: (data: RowItem[]) => void;
   onToggleDnf: (driverId: string) => void;
 };
@@ -248,6 +248,13 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
   const [raceItems, setRaceItems] = useState<RowItem[]>([]);
   const [sprintItems, setSprintItems] = useState<RowItem[]>([]);
   const [editInitialised, setEditInitialised] = useState(false);
+
+  useEffect(() => {
+    setEditInitialised(false);
+    setRaceItems([]);
+    setSprintItems([]);
+    setActiveTab("race");
+  }, [raceId]);
 
   useEffect(() => { loadRaceResults(raceId); }, [raceId]);
 

@@ -90,16 +90,10 @@ const RaceCard = React.memo(({
       </View>
     </View>
 
-    {/* Actions */}
+    {/* Actions — card opens editor; reset is separate to avoid nested press targets */}
     <View style={styles.cardActions}>
-      <TouchableOpacity style={styles.editButton} onPress={onPress}>
-        <Text style={styles.editButtonText}>Edit</Text>
-      </TouchableOpacity>
       {isModified && (
-        <TouchableOpacity
-          style={styles.resetButton}
-          onPress={(e) => { e.stopPropagation?.(); onReset(); }}
-        >
+        <TouchableOpacity style={styles.resetButton} onPress={onReset}>
           <Text style={styles.resetButtonText}>Reset</Text>
         </TouchableOpacity>
       )}
@@ -215,9 +209,7 @@ const styles = StyleSheet.create({
   sprintText:         { color: COLORS.sprint, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   editedBadge:        { backgroundColor: "#f5c51822", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.yellow },
   editedText:         { color: COLORS.yellow, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
-  cardActions:        { alignItems: "flex-end", gap: 6 },
-  editButton:         { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: COLORS.red },
-  editButtonText:     { color: COLORS.white, fontSize: 12, fontWeight: "700" },
+  cardActions:        { alignItems: "flex-end", gap: 6, justifyContent: "center", minWidth: 72 },
   resetButton:        { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: COLORS.yellow },
   resetButtonText:    { color: COLORS.yellow, fontSize: 12, fontWeight: "600" },
 });

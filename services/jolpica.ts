@@ -16,6 +16,17 @@ import {
 
 const BASE = "https://api.jolpi.ca/ergast/f1";
 const YEAR = 2025;
+const FETCH_TIMEOUT_MS = 25_000;
+
+function parseApiInt(s: string | undefined, fallback = 0): number {
+  const n = parseInt(String(s), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseApiFloat(s: string | undefined, fallback = 0): number {
+  const n = parseFloat(String(s));
+  return Number.isFinite(n) ? n : fallback;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RAW TYPES
@@ -123,13 +134,24 @@ export type ApiConstructorStanding = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Jolpica ${res.status}: ${url}`);
-  return res.json() as Promise<T>;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`Jolpica ${res.status}: ${url}`);
+    return res.json() as Promise<T>;
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Jolpica request timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /** Build app Driver from API row (handles missing code / nationality on reserve entries). */
-function driverFromJolpica(d: JolpicaDriver, teamId: string): Driver {
+export function driverFromJolpica(d: JolpicaDriver, teamId: string): Driver {
   const given = d.givenName?.trim() ?? "";
   const family = d.familyName?.trim() ?? "";
   const name =
@@ -158,6 +180,13 @@ function driverFromJolpica(d: JolpicaDriver, teamId: string): Driver {
 
 function isFinished(positionText: string): boolean {
   return !["R", "D", "E", "W", "N", "F"].includes(positionText);
+}
+
+/** Parsed grid position for a classified finisher; null if DNF / non-finite / invalid. */
+function finishingPlace(positionStr: string, positionText: string): number | null {
+  if (!isFinished(positionText)) return null;
+  const p = parseApiInt(positionStr, 0);
+  return p > 0 ? p : null;
 }
 
 function shortRaceName(raceName: string): string {
@@ -190,54 +219,69 @@ export async function fetchCalendar(year = YEAR): Promise<CalendarData> {
     fetchJson<JolpicaConstructorStandingsResponse>(`${BASE}/${year}/constructorstandings/`),
   ]);
 
+  const constructorsList =
+    constructorsData.MRData?.ConstructorTable?.Constructors ?? [];
+  const racesList = racesData.MRData?.RaceTable?.Races ?? [];
+  const driversList = driversData.MRData?.DriverTable?.Drivers ?? [];
+
+  if (racesList.length === 0) {
+    throw new Error("Jolpica returned no races for this season");
+  }
+
   // ── Teams ────────────────────────────────────────────────────────────────
   const teams: Record<string, Team> = {};
-  for (const c of constructorsData.MRData.ConstructorTable.Constructors) {
+  for (const c of constructorsList) {
+    if (!c?.constructorId) continue;
     teams[c.constructorId] = {
       id: c.constructorId,
-      name: c.name,
+      name: c.name ?? c.constructorId,
       color: TEAM_COLORS[c.constructorId] ?? "#888888",
       driverIds: [],
     };
   }
 
   // ── Race skeletons ────────────────────────────────────────────────────────
-  const races: Race[] = racesData.MRData.RaceTable.Races.map((r) => ({
-    id: parseInt(r.round, 10),
-    name: r.raceName,
-    shortName: shortRaceName(r.raceName),
-    circuit: r.Circuit.circuitName,
-    date: r.date,
-    hasSprint: SPRINT_ROUNDS_2025.has(parseInt(r.round, 10)),
-    results: [],
-  }));
+  const races: Race[] = racesList.map((r) => {
+    const round = parseApiInt(r.round, 0);
+    return {
+      id: round,
+      name: r.raceName ?? `Round ${round}`,
+      shortName: shortRaceName(r.raceName ?? ""),
+      circuit: r.Circuit?.circuitName ?? "",
+      date: r.date ?? "",
+      hasSprint: SPRINT_ROUNDS_2025.has(round),
+      results: [],
+    };
+  });
 
   // ── Parse standings (safe against empty StandingsLists) ──────────────────
-  const rawDriverStandings: JolpicaDriverStanding[] =
+  const rawDriverStandings: JolpicaDriverStanding[] = (
     driverStandingsData.MRData?.StandingsTable?.StandingsLists?.[0]
-      ?.DriverStandings ?? [];
+      ?.DriverStandings ?? []
+  ).filter((s) => Boolean(s?.Driver?.driverId));
 
-  const rawConstructorStandings: JolpicaConstructorStanding[] =
+  const rawConstructorStandings: JolpicaConstructorStanding[] = (
     constructorStandingsData.MRData?.StandingsTable?.StandingsLists?.[0]
-      ?.ConstructorStandings ?? [];
+      ?.ConstructorStandings ?? []
+  ).filter((s) => Boolean(s?.Constructor?.constructorId));
 
   if (rawDriverStandings.length === 0) {
     console.warn("Jolpica returned empty driver standings");
   }
 
   const driverStandings: ApiDriverStanding[] = rawDriverStandings.map((s) => ({
-    position: parseInt(s.position, 10),
+    position: parseApiInt(s.position, 0),
     driverId: s.Driver.driverId,
-    points: parseFloat(s.points),
-    wins: parseInt(s.wins, 10),
+    points: parseApiFloat(s.points, 0),
+    wins: parseApiInt(s.wins, 0),
     teamId: s.Constructors[0]?.constructorId ?? "",
   }));
 
   const constructorStandings: ApiConstructorStanding[] = rawConstructorStandings.map((s) => ({
-    position: parseInt(s.position, 10),
+    position: parseApiInt(s.position, 0),
     teamId: s.Constructor.constructorId,
-    points: parseFloat(s.points),
-    wins: parseInt(s.wins, 10),
+    points: parseApiFloat(s.points, 0),
+    wins: parseApiInt(s.wins, 0),
   }));
 
   // ── Drivers ───────────────────────────────────────────────────────────────
@@ -249,7 +293,8 @@ export async function fetchCalendar(year = YEAR): Promise<CalendarData> {
   }
 
   const drivers: Record<string, Driver> = {};
-  for (const d of driversData.MRData.DriverTable.Drivers) {
+  for (const d of driversList) {
+    if (!d?.driverId) continue;
     const teamId = driverTeamMap.get(d.driverId) ?? "";
     drivers[d.driverId] = driverFromJolpica(d, teamId);
     if (teamId && teams[teamId] && !teams[teamId].driverIds.includes(d.driverId)) {
@@ -301,13 +346,18 @@ export async function fetchRaceResults(
   ]);
 
   const driverTeams: Record<string, string> = {};
-  const rawResults = resultsData.MRData.RaceTable.Races[0]?.Results ?? [];
-  const rawSprint = sprintData?.MRData.RaceTable.Races[0]?.SprintResults ?? [];
+  const raceRow = resultsData.MRData?.RaceTable?.Races?.[0];
+  if (!raceRow) {
+    return { results: [], driverTeams: {}, driversPatch: {} };
+  }
+
+  const rawResults = raceRow.Results ?? [];
+  const rawSprint = sprintData?.MRData?.RaceTable?.Races?.[0]?.SprintResults ?? [];
 
   const sprintPosMap = new Map(
     rawSprint.map((s) => [
       s.Driver.driverId,
-      isFinished(s.positionText) ? parseInt(s.position, 10) : null,
+      finishingPlace(s.position, s.positionText),
     ])
   );
 
@@ -315,7 +365,7 @@ export async function fetchRaceResults(
     driverTeams[r.Driver.driverId] = r.Constructor.constructorId;
     return {
       driverId: r.Driver.driverId,
-      position: isFinished(r.positionText) ? parseInt(r.position, 10) : null,
+      position: finishingPlace(r.position, r.positionText),
       sprintPosition: sprintPosMap.get(r.Driver.driverId) ?? null,
     };
   });

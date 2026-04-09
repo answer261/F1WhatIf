@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fetchCalendar } from "../services/jolpica";
-import type { SeasonData } from "../data/f1-constants";
+import { fetchCalendar, type CalendarData } from "../services/jolpica";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG
@@ -14,7 +13,7 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 type CacheEntry = {
   fetchedAt: number;
-  data: SeasonData;
+  data: CalendarData;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,7 +23,7 @@ type CacheEntry = {
 export type SeasonDataState =
   | { status: "loading" }
   | { status: "error"; error: string; retry: () => void }
-  | { status: "success"; data: SeasonData; fromCache: boolean };
+  | { status: "success"; data: CalendarData; fromCache: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HOOK
@@ -33,12 +32,27 @@ export type SeasonDataState =
 export function useSeasonData(): SeasonDataState {
   const [state, setState] = useState<SeasonDataState>({ status: "loading" });
 
-  const load = async () => {
+  const refreshInBackground = useCallback(async () => {
+    try {
+      const data = await fetchCalendar();
+      await writeCache(data);
+      setState((prev) => {
+        if (prev.status !== "success") return prev;
+        return { status: "success", data, fromCache: false };
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("Background calendar refresh failed:", msg);
+    }
+  }, []);
+
+  const load = useCallback(async () => {
     setState({ status: "loading" });
     try {
       const cached = await readCache();
       if (cached) {
         setState({ status: "success", data: cached.data, fromCache: true });
+        void refreshInBackground();
         return;
       }
 
@@ -53,16 +67,17 @@ export function useSeasonData(): SeasonDataState {
       if (stale) {
         console.warn("Network error, using stale cache:", message);
         setState({ status: "success", data: stale.data, fromCache: true });
+        void refreshInBackground();
         return;
       }
 
       setState({ status: "error", error: message, retry: load });
     }
-  };
+  }, [refreshInBackground]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   return state;
 }
@@ -85,7 +100,7 @@ async function readCache(
   }
 }
 
-async function writeCache(data: SeasonData): Promise<void> {
+async function writeCache(data: CalendarData): Promise<void> {
   try {
     await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), data }));
   } catch (err) {
