@@ -39,7 +39,6 @@ function formatDate(iso: string): string {
 
 type RaceCardProps = {
   race: Race;
-  winnerShort: string;
   isModified: boolean;
   onPress: () => void;
   onReset: () => void;
@@ -47,7 +46,6 @@ type RaceCardProps = {
 
 const RaceCard = React.memo(({
   race,
-  winnerShort,
   isModified,
   onPress,
   onReset,
@@ -82,12 +80,7 @@ const RaceCard = React.memo(({
       <Text style={styles.circuitName} numberOfLines={1}>
         {race.circuit}
       </Text>
-      <View style={styles.cardFooter}>
-        <Text style={styles.dateText}>{formatDate(race.date)}</Text>
-        {winnerShort ? (
-          <Text style={styles.winnerText}>🏆 {winnerShort}</Text>
-        ) : null}
-      </View>
+      <Text style={styles.dateText}>{formatDate(race.date)}</Text>
     </View>
 
     {/* Actions — card opens editor; reset is separate to avoid nested press targets */}
@@ -108,24 +101,16 @@ const RaceCard = React.memo(({
 export default function RaceListScreen({ onSelectRace, onOpenStandings }: Props) {
   const { seasonData, isRaceModified, resetRace, resetAll, overrides } = useRaceStore();
   const races = seasonData?.races ?? [];
-  const drivers = seasonData?.drivers ?? {};
   const modifiedCount = Object.keys(overrides).length;
-
-  const getWinnerShort = useCallback((race: Race): string => {
-    const winner = race.results.find((r) => r.position === 1);
-    if (!winner) return "";
-    return drivers[winner.driverId]?.short ?? "";
-  }, [drivers]);
 
   const renderItem = useCallback(({ item }: { item: Race }) => (
     <RaceCard
       race={item}
-      winnerShort={getWinnerShort(item)}
       isModified={isRaceModified(item.id)}
       onPress={() => onSelectRace(item.id)}
       onReset={() => resetRace(item.id)}
     />
-  ), [getWinnerShort, isRaceModified, onSelectRace, resetRace]);
+  ), [isRaceModified, onSelectRace, resetRace]);
 
   const keyExtractor = useCallback((item: Race) => String(item.id), []);
 
@@ -202,9 +187,7 @@ const styles = StyleSheet.create({
   cardRow:            { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   raceName:           { color: COLORS.white, fontSize: 15, fontWeight: "700", flexShrink: 1 },
   circuitName:        { color: COLORS.grey, fontSize: 12 },
-  cardFooter:         { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },
-  dateText:           { color: COLORS.greyLight, fontSize: 11 },
-  winnerText:         { color: COLORS.grey, fontSize: 11 },
+  dateText:           { color: COLORS.greyLight, fontSize: 11, marginTop: 2 },
   sprintBadge:        { backgroundColor: "#00bfff22", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.sprint },
   sprintText:         { color: COLORS.sprint, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   editedBadge:        { backgroundColor: "#f5c51822", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.yellow },
