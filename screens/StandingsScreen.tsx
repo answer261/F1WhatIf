@@ -5,9 +5,10 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
   StatusBar,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { androidScreenVerticalPad } from "../utils/androidScreenPad";
 import { useRaceStore } from "../store/useRaceStore";
 
 type Tab = "drivers" | "constructors";
@@ -71,7 +72,7 @@ export default function StandingsScreen({ onBack }: Props) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, androidScreenVerticalPad]} edges={["top", "bottom", "left", "right"]}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
       {/* Header */}

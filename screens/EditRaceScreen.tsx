@@ -4,11 +4,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Alert,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { androidScreenVerticalPad } from "../utils/androidScreenPad";
 import DraggableFlatList, {
   RenderItemParams,
   ScaleDecorator,
@@ -319,7 +320,7 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
   if (!race) return null;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, androidScreenVerticalPad]} edges={["top", "bottom", "left", "right"]}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
       {/* Header */}

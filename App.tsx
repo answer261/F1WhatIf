@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { androidScreenVerticalPad } from "./utils/androidScreenPad";
 import { useSeasonData } from "./hooks/useSeasonData";
 import { useRaceStore } from "./store/useRaceStore";
 import RaceListScreen from "./screens/RaceListScreen";
@@ -56,26 +58,34 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      {seasonData.status === "loading" && <LoadingScreen />}
-      {seasonData.status === "error" && (
-        <ErrorScreen message={seasonData.error} onRetry={seasonData.retry} />
-      )}
-      {seasonData.status === "success" && (
-        <>
-          {screen.name === "raceList" && (
-            <RaceListScreen
-              onSelectRace={(id) => setScreen({ name: "editRace", raceId: id })}
-              onOpenStandings={() => setScreen({ name: "standings" })}
-            />
-          )}
-          {screen.name === "editRace" && (
-            <EditRaceScreen raceId={screen.raceId} onBack={() => setScreen({ name: "raceList" })} />
-          )}
-          {screen.name === "standings" && (
-            <StandingsScreen onBack={() => setScreen({ name: "raceList" })} />
-          )}
-        </>
-      )}
+      <SafeAreaProvider>
+        {seasonData.status === "loading" && (
+          <SafeAreaView style={[styles.root, androidScreenVerticalPad]} edges={["top", "bottom"]}>
+            <LoadingScreen />
+          </SafeAreaView>
+        )}
+        {seasonData.status === "error" && (
+          <SafeAreaView style={[styles.root, androidScreenVerticalPad]} edges={["top", "bottom"]}>
+            <ErrorScreen message={seasonData.error} onRetry={seasonData.retry} />
+          </SafeAreaView>
+        )}
+        {seasonData.status === "success" && (
+          <>
+            {screen.name === "raceList" && (
+              <RaceListScreen
+                onSelectRace={(id) => setScreen({ name: "editRace", raceId: id })}
+                onOpenStandings={() => setScreen({ name: "standings" })}
+              />
+            )}
+            {screen.name === "editRace" && (
+              <EditRaceScreen raceId={screen.raceId} onBack={() => setScreen({ name: "raceList" })} />
+            )}
+            {screen.name === "standings" && (
+              <StandingsScreen onBack={() => setScreen({ name: "raceList" })} />
+            )}
+          </>
+        )}
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

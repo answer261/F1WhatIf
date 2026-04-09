@@ -121,14 +121,23 @@ export const useRaceStore = create<StoreState>((set, get) => ({
     }));
 
     try {
-      const { results, driverTeams } = await fetchRaceResults(raceId, race.hasSprint);
+      const { results, driverTeams, driversPatch } = await fetchRaceResults(raceId, race.hasSprint);
 
       // Patch race results into seasonData
       const updatedRaces = seasonData.races.map((r) =>
         r.id === raceId ? { ...r, results } : r
       );
 
-      const updatedSeasonData: SeasonData = { ...seasonData, races: updatedRaces };
+      const mergedDrivers =
+        Object.keys(driversPatch).length > 0
+          ? { ...seasonData.drivers, ...driversPatch }
+          : seasonData.drivers;
+
+      const updatedSeasonData: SeasonData = {
+        ...seasonData,
+        races: updatedRaces,
+        drivers: mergedDrivers,
+      };
 
       // Merge new driver→team mappings
       const updatedDriverTeamMap = { ...get().driverTeamMap, ...driverTeams };

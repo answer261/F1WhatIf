@@ -81,6 +81,22 @@ export const NATIONALITY_FLAGS: Record<string, string> = {
   Austrian:     "🇦🇹",
   Chinese:      "🇨🇳",
   Mexican:      "🇲🇽",
+  // Common Ergast / reserve nationalities not in the core grid list above
+  Estonian:     "🇪🇪",
+  Danish:       "🇩🇰",
+  Swedish:      "🇸🇪",
+  Swiss:        "🇨🇭",
+  Irish:        "🇮🇪",
+  Portuguese:   "🇵🇹",
+  Belgian:      "🇧🇪",
+  Polish:       "🇵🇱",
+  Colombian:    "🇨🇴",
+  "South African": "🇿🇦",
+  Malaysian:    "🇲🇾",
+  Indonesian:   "🇮🇩",
+  Indian:       "🇮🇳",
+  Korean:       "🇰🇷",
+  Israeli:      "🇮🇱",
 };
 
 export function getFlag(nationality: string): string {

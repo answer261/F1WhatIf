@@ -23,10 +23,10 @@ const YEAR = 2025;
 
 type JolpicaDriver = {
   driverId: string;
-  code: string;
-  givenName: string;
-  familyName: string;
-  nationality: string;
+  code?: string;
+  givenName?: string;
+  familyName?: string;
+  nationality?: string;
 };
 
 type JolpicaConstructor = {
@@ -128,6 +128,34 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Build app Driver from API row (handles missing code / nationality on reserve entries). */
+function driverFromJolpica(d: JolpicaDriver, teamId: string): Driver {
+  const given = d.givenName?.trim() ?? "";
+  const family = d.familyName?.trim() ?? "";
+  const name =
+    given && family
+      ? `${given} ${family}`
+      : given || family || d.driverId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const code = d.code?.trim();
+  const asciiFamily = family
+    ? family.normalize("NFD").replace(/\p{M}/gu, "")
+    : "";
+  const short =
+    code ||
+    (asciiFamily.length >= 3 ? asciiFamily.slice(0, 3).toUpperCase() : "") ||
+    d.driverId.replace(/^.*_/, "").slice(0, 3).toUpperCase() ||
+    "???";
+
+  return {
+    id: d.driverId,
+    name,
+    short,
+    teamId,
+    flag: d.nationality ? getFlag(d.nationality) : "🏁",
+  };
+}
+
 function isFinished(positionText: string): boolean {
   return !["R", "D", "E", "W", "N", "F"].includes(positionText);
 }
@@ -155,7 +183,8 @@ export async function fetchCalendar(year = YEAR): Promise<CalendarData> {
     constructorStandingsData,
   ] = await Promise.all([
     fetchJson<JolpicaRacesResponse>(`${BASE}/${year}/races/?limit=30`),
-    fetchJson<JolpicaDriversResponse>(`${BASE}/${year}/drivers/?limit=30`),
+    // Season lists >30 drivers (reserves / test drivers); a low limit drops race regulars from the map.
+    fetchJson<JolpicaDriversResponse>(`${BASE}/${year}/drivers/?limit=100`),
     fetchJson<JolpicaConstructorsResponse>(`${BASE}/${year}/constructors/?limit=20`),
     fetchJson<JolpicaDriverStandingsResponse>(`${BASE}/${year}/driverstandings/`),
     fetchJson<JolpicaConstructorStandingsResponse>(`${BASE}/${year}/constructorstandings/`),
@@ -222,15 +251,20 @@ export async function fetchCalendar(year = YEAR): Promise<CalendarData> {
   const drivers: Record<string, Driver> = {};
   for (const d of driversData.MRData.DriverTable.Drivers) {
     const teamId = driverTeamMap.get(d.driverId) ?? "";
-    drivers[d.driverId] = {
-      id: d.driverId,
-      name: `${d.givenName} ${d.familyName}`,
-      short: d.code ?? d.familyName.slice(0, 3).toUpperCase(),
-      teamId,
-      flag: getFlag(d.nationality),
-    };
+    drivers[d.driverId] = driverFromJolpica(d, teamId);
     if (teamId && teams[teamId] && !teams[teamId].driverIds.includes(d.driverId)) {
       teams[teamId].driverIds.push(d.driverId);
+    }
+  }
+
+  // Standings always reference full-time drivers; fill gaps if the drivers feed is truncated or out of sync.
+  for (const s of rawDriverStandings) {
+    const id = s.Driver.driverId;
+    if (drivers[id]) continue;
+    const teamId = s.Constructors[0]?.constructorId ?? "";
+    drivers[id] = driverFromJolpica(s.Driver, teamId);
+    if (teamId && teams[teamId] && !teams[teamId].driverIds.includes(id)) {
+      teams[teamId].driverIds.push(id);
     }
   }
 
@@ -248,6 +282,8 @@ export async function fetchCalendar(year = YEAR): Promise<CalendarData> {
 export type RaceResultPayload = {
   results: RaceEntry[];
   driverTeams: Record<string, string>;
+  /** Drivers seen in this race but possibly missing from the season driver list (substitutes, etc.). */
+  driversPatch: Record<string, Driver>;
 };
 
 export async function fetchRaceResults(
@@ -288,5 +324,18 @@ export async function fetchRaceResults(
     driverTeams[s.Driver.driverId] = s.Constructor.constructorId;
   }
 
-  return { results, driverTeams };
+  const driversPatch: Record<string, Driver> = {};
+  const addFromResult = (driver: JolpicaDriver, constructorId: string) => {
+    const id = driver.driverId;
+    if (driversPatch[id]) return;
+    driversPatch[id] = driverFromJolpica(driver, constructorId);
+  };
+  for (const r of rawResults) {
+    addFromResult(r.Driver, r.Constructor.constructorId);
+  }
+  for (const s of rawSprint) {
+    addFromResult(s.Driver, s.Constructor.constructorId);
+  }
+
+  return { results, driverTeams, driversPatch };
 }

@@ -6,8 +6,9 @@ import {
   FlatList,
   TouchableOpacity,
   StatusBar,
-  SafeAreaView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { androidScreenVerticalPad } from "../utils/androidScreenPad";
 import { useRaceStore } from "../store/useRaceStore";
 import type { Race } from "../data/f1-constants";
 
@@ -135,7 +136,7 @@ export default function RaceListScreen({ onSelectRace, onOpenStandings }: Props)
   const keyExtractor = useCallback((item: Race) => String(item.id), []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, androidScreenVerticalPad]} edges={["top", "bottom", "left", "right"]}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
       {/* Header */}
