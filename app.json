@@ -1,10 +1,10 @@
 {
   "expo": {
     "name": "F1WhatIf",
-    "slug": "F1WhatIf",
+    "slug": "f1whatif",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -26,6 +26,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "42a3c479-e417-4562-a30b-bc0ef54ed2ad"
+      }
+    },
+    "owner": "jerzy-litwinienko"
   }
 }
