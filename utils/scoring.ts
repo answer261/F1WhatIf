@@ -6,9 +6,9 @@ import {
   type Race,
 } from "../data/f1-constants";
 import type {
-  ApiDriverStanding,
-  ApiConstructorStanding,
-} from "../services/jolpica";
+  BaselineConstructorStanding,
+  BaselineDriverStanding,
+} from "../services/seasonTypes";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -34,14 +34,14 @@ export type RaceOverrides = Record<number, RaceEntry[]>;
 // ─────────────────────────────────────────────────────────────────────────────
 // DELTA-BASED RECALCULATION
 //
-// Strategy: start from the official API standings, then for each overridden
+// Strategy: start from the bundled end-of-season standings, then for each overridden
 // race compute the points difference between the original and modified result
 // and apply it as a delta. This means we never need all 24 races loaded.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function applyOverridesToStandings(
-  apiDriverStandings: ApiDriverStanding[],
-  apiConstructorStandings: ApiConstructorStanding[],
+  baselineDriverStandings: BaselineDriverStanding[],
+  baselineConstructorStandings: BaselineConstructorStanding[],
   overrides: RaceOverrides,
   races: Race[], // only needs results for overridden races (already loaded)
   driverTeamMap: Record<string, string>, // driverId → teamId (from loaded results)
@@ -50,25 +50,25 @@ export function applyOverridesToStandings(
   drivers: DriverStanding[];
   constructors: ConstructorStanding[];
 } {
-  // Start with a mutable copy of API standings
+  // Start with a mutable copy of baseline standings
   const driverPoints = new Map<string, number>(
-    apiDriverStandings.map((s) => [s.driverId, s.points])
+    baselineDriverStandings.map((s) => [s.driverId, s.points])
   );
   const driverWins = new Map<string, number>(
-    apiDriverStandings.map((s) => [s.driverId, s.wins])
+    baselineDriverStandings.map((s) => [s.driverId, s.wins])
   );
   const driverTeamId = new Map<string, string>(
-    apiDriverStandings.map((s) => [s.driverId, s.teamId])
+    baselineDriverStandings.map((s) => [s.driverId, s.teamId])
   );
 
   const constructorPoints = new Map<string, number>(
-    apiConstructorStandings.map((s) => [s.teamId, s.points])
+    baselineConstructorStandings.map((s) => [s.teamId, s.points])
   );
   const constructorWins = new Map<string, number>(
-    apiConstructorStandings.map((s) => [s.teamId, s.wins])
+    baselineConstructorStandings.map((s) => [s.teamId, s.wins])
   );
 
-  // Also include any drivers from driverTeamMap not in API standings
+  // Also include any drivers from driverTeamMap not in baseline standings
   // (edge case: new drivers mid-season)
   for (const [driverId, teamId] of Object.entries(driverTeamMap)) {
     if (!driverTeamId.has(driverId)) {
@@ -110,7 +110,7 @@ export function applyOverridesToStandings(
       driverPoints.set(driverId, (driverPoints.get(driverId) ?? 0) + pointsDelta);
       driverWins.set(driverId, (driverWins.get(driverId) ?? 0) + winsDelta);
 
-      // Apply delta to constructor (API standings may omit Constructors[]; season drivers / result patches often have teamId)
+      // Apply delta to constructor (baseline rows may omit teamId; season drivers / result patches often have it)
       const teamId =
         driverTeamId.get(driverId) ||
         driverTeamMap[driverId] ||

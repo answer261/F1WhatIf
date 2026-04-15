@@ -47,8 +47,8 @@ export default function StandingsScreen({ onBack }: Props) {
   const {
     seasonData,
     overrides,
-    apiDriverStandings,
-    apiConstructorStandings,
+    baselineDriverStandings,
+    baselineConstructorStandings,
     localDriverStandings,
     localConstructorStandings,
   } = useRaceStore();
@@ -59,16 +59,16 @@ export default function StandingsScreen({ onBack }: Props) {
   const modifiedCount = Object.keys(overrides).length;
 
   // Use local (recalculated) standings when overrides are active,
-  // otherwise show the official API standings
-  const driverStandings = isModified ? localDriverStandings : apiDriverStandings;
-  const constructorStandings = isModified ? localConstructorStandings : apiConstructorStandings;
+  // otherwise show the bundled baseline standings
+  const driverStandings = isModified ? localDriverStandings : baselineDriverStandings;
+  const constructorStandings = isModified ? localConstructorStandings : baselineConstructorStandings;
 
-  // For the delta column: compare current position against the API standings
-  const apiDriverPositions = Object.fromEntries(
-    apiDriverStandings.map((s) => [s.driverId, s.position])
+  // Delta column: compare current position against baseline
+  const baselineDriverPositions = Object.fromEntries(
+    baselineDriverStandings.map((s) => [s.driverId, s.position])
   );
-  const apiConstructorPositions = Object.fromEntries(
-    apiConstructorStandings.map((s) => [s.teamId, s.position])
+  const baselineConstructorPositions = Object.fromEntries(
+    baselineConstructorStandings.map((s) => [s.teamId, s.position])
   );
 
   return (
@@ -130,7 +130,7 @@ export default function StandingsScreen({ onBack }: Props) {
               const team = teams[driver?.teamId ?? ""] ?? teams[s.teamId ?? ""];
               const isChampion = s.position === 1;
               const delta = isModified
-                ? (apiDriverPositions[s.driverId] ?? s.position) - s.position
+                ? (baselineDriverPositions[s.driverId] ?? s.position) - s.position
                 : 0;
 
               return (
@@ -170,7 +170,7 @@ export default function StandingsScreen({ onBack }: Props) {
                 .filter(Boolean)
                 .join(" · ");
               const delta = isModified
-                ? (apiConstructorPositions[s.teamId] ?? s.position) - s.position
+                ? (baselineConstructorPositions[s.teamId] ?? s.position) - s.position
                 : 0;
 
               return (

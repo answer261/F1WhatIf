@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { androidScreenVerticalPad } from "./utils/androidScreenPad";
 import { useSeasonData } from "./hooks/useSeasonData";
+import { preloadedRaceResultsMap } from "./services/bundledSeason";
 import { useRaceStore } from "./store/useRaceStore";
 import RaceListScreen from "./screens/RaceListScreen";
 import EditRaceScreen from "./screens/EditRaceScreen";
@@ -45,7 +46,6 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "raceList" });
   const seasonData = useSeasonData();
   const { loadSeason, isSeasonLoaded } = useRaceStore();
-
   const calendarPayload =
     seasonData.status === "success" ? seasonData.data : null;
 
@@ -54,7 +54,8 @@ export default function App() {
     loadSeason(
       calendarPayload.seasonData,
       calendarPayload.driverStandings,
-      calendarPayload.constructorStandings
+      calendarPayload.constructorStandings,
+      preloadedRaceResultsMap
     );
   }, [calendarPayload, isSeasonLoaded, loadSeason]);
 

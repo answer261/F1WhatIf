@@ -3,18 +3,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Driver = {
-  id: string;           // Jolpica driverId, e.g. "max_verstappen"
+  id: string;           // Stable driver id, e.g. "max_verstappen"
   name: string;         // full name
   short: string;        // 3-letter code, e.g. "VER"
-  teamId: string;       // Jolpica constructorId, e.g. "red_bull"
+  teamId: string;       // Constructor id, e.g. "red_bull"
   flag: string;         // emoji flag
 };
 
 export type Team = {
-  id: string;           // Jolpica constructorId, e.g. "red_bull"
+  id: string;           // Constructor id, e.g. "red_bull"
   name: string;         // display name
   color: string;        // hex color
-  driverIds: string[];  // Jolpica driverIds
+  driverIds: string[];  // Driver ids
 };
 
 export type RaceEntry = {
@@ -41,7 +41,7 @@ export type SeasonData = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TEAM COLORS
-// These never come from the API — they're a branding/UI decision.
+// These are fixed branding choices, not read from bundled data.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TEAM_COLORS: Record<string, string> = {
@@ -81,7 +81,7 @@ export const NATIONALITY_FLAGS: Record<string, string> = {
   Austrian:     "🇦🇹",
   Chinese:      "🇨🇳",
   Mexican:      "🇲🇽",
-  // Common Ergast / reserve nationalities not in the core grid list above
+  // Common reserve / extra nationalities not in the core grid list above
   Estonian:     "🇪🇪",
   Danish:       "🇩🇰",
   Swedish:      "🇸🇪",

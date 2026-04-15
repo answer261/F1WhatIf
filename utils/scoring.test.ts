@@ -1,6 +1,9 @@
 import { applyOverridesToStandings, buildRacePointsMap } from "./scoring";
 import type { Race } from "../data/f1-constants";
-import type { ApiDriverStanding, ApiConstructorStanding } from "../services/jolpica";
+import type {
+  BaselineConstructorStanding,
+  BaselineDriverStanding,
+} from "../services/seasonTypes";
 
 describe("buildRacePointsMap", () => {
   it("awards race win points and sprint points when enabled", () => {
@@ -26,12 +29,12 @@ describe("buildRacePointsMap", () => {
 });
 
 describe("applyOverridesToStandings", () => {
-  it("applies constructor delta using driversById when API standing omits teamId", () => {
-    const apiDrivers: ApiDriverStanding[] = [
+  it("applies constructor delta using driversById when baseline standing omits teamId", () => {
+    const baselineDrivers: BaselineDriverStanding[] = [
       { position: 1, driverId: "a", points: 100, wins: 0, teamId: "" },
       { position: 2, driverId: "b", points: 90, wins: 0, teamId: "t2" },
     ];
-    const apiConstructors: ApiConstructorStanding[] = [
+    const baselineConstructors: BaselineConstructorStanding[] = [
       { position: 1, teamId: "t1", points: 100, wins: 0 },
       { position: 2, teamId: "t2", points: 80, wins: 0 },
     ];
@@ -61,8 +64,8 @@ describe("applyOverridesToStandings", () => {
       ],
     };
     const { constructors } = applyOverridesToStandings(
-      apiDrivers,
-      apiConstructors,
+      baselineDrivers,
+      baselineConstructors,
       overrides,
       races,
       {},

@@ -1,8 +1,8 @@
-import { driverFromJolpica } from "./jolpica";
+import { driverFromRawRow } from "./driverDisplay";
 
-describe("driverFromJolpica", () => {
+describe("driverFromRawRow", () => {
   it("builds display name from given + family", () => {
-    const d = driverFromJolpica(
+    const d = driverFromRawRow(
       {
         driverId: "john_doe",
         givenName: "John",
@@ -19,7 +19,7 @@ describe("driverFromJolpica", () => {
   });
 
   it("falls back when code missing", () => {
-    const d = driverFromJolpica(
+    const d = driverFromRawRow(
       { driverId: "foo_bar", givenName: "", familyName: "Barcelona", nationality: undefined },
       "ferrari"
     );

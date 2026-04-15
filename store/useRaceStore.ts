@@ -1,7 +1,11 @@
 import { create } from "zustand";
-import { fetchRaceResults } from "../services/jolpica";
 import type { SeasonData, RaceEntry } from "../data/f1-constants";
-import type { ApiDriverStanding, ApiConstructorStanding } from "../services/jolpica";
+import { preloadedRaceResultsMap } from "../services/bundledSeason";
+import type {
+  BaselineConstructorStanding,
+  BaselineDriverStanding,
+  RaceResultPayload,
+} from "../services/seasonTypes";
 import {
   applyOverridesToStandings,
   type RaceOverrides,
@@ -20,8 +24,8 @@ export type StoreState = {
   seasonData: SeasonData | null;
   isSeasonLoaded: boolean;
 
-  apiDriverStandings: ApiDriverStanding[];
-  apiConstructorStandings: ApiConstructorStanding[];
+  baselineDriverStandings: BaselineDriverStanding[];
+  baselineConstructorStandings: BaselineConstructorStanding[];
 
   localDriverStandings: DriverStanding[];
   localConstructorStandings: ConstructorStanding[];
@@ -34,8 +38,9 @@ export type StoreState = {
 
   loadSeason: (
     data: SeasonData,
-    driverStandings: ApiDriverStanding[],
-    constructorStandings: ApiConstructorStanding[]
+    driverStandings: BaselineDriverStanding[],
+    constructorStandings: BaselineConstructorStanding[],
+    preloadedRaceResults?: Record<number, RaceResultPayload>
   ) => void;
   loadRaceResults: (raceId: number) => Promise<void>;
   setRaceResults: (raceId: number, results: RaceEntry[]) => void;
@@ -54,16 +59,16 @@ function recalculate(
   state: Pick<
     StoreState,
     | "seasonData"
-    | "apiDriverStandings"
-    | "apiConstructorStandings"
+    | "baselineDriverStandings"
+    | "baselineConstructorStandings"
     | "overrides"
     | "driverTeamMap"
   >
 ): { drivers: DriverStanding[]; constructors: ConstructorStanding[] } {
   if (!state.seasonData) return { drivers: [], constructors: [] };
   return applyOverridesToStandings(
-    state.apiDriverStandings,
-    state.apiConstructorStandings,
+    state.baselineDriverStandings,
+    state.baselineConstructorStandings,
     state.overrides,
     state.seasonData.races,
     state.driverTeamMap,
@@ -78,35 +83,54 @@ function recalculate(
 export const useRaceStore = create<StoreState>((set, get) => ({
   seasonData: null,
   isSeasonLoaded: false,
-  apiDriverStandings: [],
-  apiConstructorStandings: [],
+  baselineDriverStandings: [],
+  baselineConstructorStandings: [],
   localDriverStandings: [],
   localConstructorStandings: [],
   raceLoadStates: {},
   overrides: {},
   driverTeamMap: {},
 
-  loadSeason: (data, driverStandings, constructorStandings) => {
+  loadSeason: (data, driverStandings, constructorStandings, preloadedRaceResults) => {
     const safeDriverStandings = driverStandings ?? [];
     const safeConstructorStandings = constructorStandings ?? [];
 
-    const driverTeamMap: Record<string, string> = {};
+    let driverTeamMap: Record<string, string> = {};
     for (const s of safeDriverStandings) {
       if (s?.driverId && s?.teamId) {
         driverTeamMap[s.driverId] = s.teamId;
       }
     }
 
+    let seasonData: SeasonData = data;
+    const raceLoadStates: Record<number, RaceLoadState> = {};
+
+    if (preloadedRaceResults && Object.keys(preloadedRaceResults).length > 0) {
+      const ordered = [...data.races].sort((a, b) => a.id - b.id);
+      for (const race of ordered) {
+        const payload = preloadedRaceResults[race.id];
+        if (!payload) continue;
+        seasonData = mergeRacePayloadIntoSeason(
+          seasonData,
+          race.id,
+          payload.results,
+          payload.driversPatch
+        );
+        driverTeamMap = { ...driverTeamMap, ...payload.driverTeams };
+        raceLoadStates[race.id] = "loaded";
+      }
+    }
+
     set({
-      seasonData: data,
+      seasonData,
       isSeasonLoaded: true,
-      apiDriverStandings: safeDriverStandings,
-      apiConstructorStandings: safeConstructorStandings,
+      baselineDriverStandings: safeDriverStandings,
+      baselineConstructorStandings: safeConstructorStandings,
       driverTeamMap,
       localDriverStandings: [],
       localConstructorStandings: [],
       overrides: {},
-      raceLoadStates: {},
+      raceLoadStates,
     });
   },
 
@@ -124,8 +148,17 @@ export const useRaceStore = create<StoreState>((set, get) => ({
       raceLoadStates: { ...s.raceLoadStates, [raceId]: "loading" },
     }));
 
+    const fallback = preloadedRaceResultsMap[raceId];
+    if (!fallback) {
+      console.error(`No bundled results for round ${raceId}`);
+      set((s) => ({
+        raceLoadStates: { ...s.raceLoadStates, [raceId]: "error" },
+      }));
+      return;
+    }
+
     try {
-      const { results, driverTeams, driversPatch } = await fetchRaceResults(raceId, race.hasSprint);
+      const { results, driverTeams, driversPatch } = fallback;
 
       set((s) => {
         if (!s.seasonData) return s;
@@ -144,8 +177,8 @@ export const useRaceStore = create<StoreState>((set, get) => ({
 
         if (hasOverrides) {
           const recalced = applyOverridesToStandings(
-            s.apiDriverStandings,
-            s.apiConstructorStandings,
+            s.baselineDriverStandings,
+            s.baselineConstructorStandings,
             s.overrides,
             updatedSeasonData.races,
             updatedDriverTeamMap,

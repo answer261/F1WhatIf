@@ -37,7 +37,7 @@ function buildRaceItems(entries: RaceEntry[]): RowItem[] {
 }
 
 function buildSprintItems(entries: RaceEntry[]): RowItem[] {
-  // Jolpica only returns sprintPosition for P1-P8 (points scorers).
+  // Bundled rows only include sprintPosition for P1–P8 (points scorers).
   // Everyone else has null but still finished. Treat ALL as finishers:
   //   P1-P8: sorted by sprintPosition
   //   P9+:   sorted by main race position as a proxy
