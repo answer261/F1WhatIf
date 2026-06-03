@@ -4,7 +4,6 @@
  */
 import {
   TEAM_COLORS,
-  SPRINT_ROUNDS_2025,
   type Driver,
   type Team,
   type Race,
@@ -77,6 +76,10 @@ type RawSprintResponse = {
   MRData: { RaceTable: { Races: Array<{ SprintResults: RawResult[] }> } };
 };
 
+type RawSprintScheduleResponse = {
+  MRData: { RaceTable: { Races: Array<{ round: string }> } };
+};
+
 type RawDriversResponse = {
   MRData: { DriverTable: { Drivers: RawDriverRow[] } };
 };
@@ -132,6 +135,37 @@ function shortRaceName(raceName: string): string {
   return raceName.replace(" Grand Prix", "").trim();
 }
 
+/**
+ * Returns the set of rounds in the given season that include a sprint.
+ * Queries the API rather than relying on a per-year hardcoded constant.
+ * Falls back to an empty set if the sprint endpoint is unavailable.
+ */
+async function fetchSprintRounds(
+  seasonRoot: string,
+  year: number
+): Promise<Set<number>> {
+  const root = seasonRoot.replace(/\/$/, "");
+  try {
+    const data = await fetchJson<RawSprintScheduleResponse>(
+      `${root}/${year}/sprint/?limit=30`
+    );
+    const rounds = data.MRData?.RaceTable?.Races ?? [];
+    const set = new Set<number>();
+    for (const r of rounds) {
+      const round = parseIntField(r.round, 0);
+      if (round > 0) set.add(round);
+    }
+    return set;
+  } catch (e) {
+    console.warn(
+      `Could not fetch sprint schedule for ${year} (${
+        e instanceof Error ? e.message : String(e)
+      }); assuming no sprints.`
+    );
+    return new Set();
+  }
+}
+
 export async function fetchCalendar(
   seasonRoot: string,
   year = DEFAULT_YEAR
@@ -143,12 +177,14 @@ export async function fetchCalendar(
     constructorsData,
     driverStandingsData,
     constructorStandingsData,
+    sprintRounds,
   ] = await Promise.all([
     fetchJson<RawRacesResponse>(`${root}/${year}/races/?limit=30`),
     fetchJson<RawDriversResponse>(`${root}/${year}/drivers/?limit=100`),
     fetchJson<RawConstructorsResponse>(`${root}/${year}/constructors/?limit=20`),
     fetchJson<RawDriverStandingsResponse>(`${root}/${year}/driverstandings/`),
     fetchJson<RawConstructorStandingsResponse>(`${root}/${year}/constructorstandings/`),
+    fetchSprintRounds(root, year),
   ]);
 
   const constructorsList =
@@ -179,7 +215,7 @@ export async function fetchCalendar(
       shortName: shortRaceName(r.raceName ?? ""),
       circuit: r.Circuit?.circuitName ?? "",
       date: r.date ?? "",
-      hasSprint: SPRINT_ROUNDS_2025.has(round),
+      hasSprint: sprintRounds.has(round),
       results: [],
     };
   });

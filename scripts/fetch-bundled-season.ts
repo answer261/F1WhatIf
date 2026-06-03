@@ -1,34 +1,55 @@
 /**
- * Regenerates data/bundled-season-2025.json (see seasonBundleFetch.ts).
- * Requires env SEASON_BUNDLE_BASE_URL (root path for season JSON, no trailing slash).
+ * Regenerates data/bundled-season-<year>.json (see seasonBundleFetch.ts).
  *
- * Run: npm run bundle-season
+ * Configuration:
+ *   --year=YYYY (CLI flag) or SEASON_YEAR env var
+ *     Defaults to the current calendar year.
+ *   SEASON_BUNDLE_BASE_URL env var
+ *     Root path for season JSON (no trailing slash).
+ *     Defaults to https://api.jolpi.ca/ergast/f1 (the maintained Ergast successor).
+ *
+ * Examples:
+ *   npm run bundle-season -- --year=2026
+ *   SEASON_YEAR=2026 npm run bundle-season
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fetchCalendar, fetchRaceResults } from "./seasonBundleFetch";
 import type { RaceResultPayload } from "../services/seasonTypes";
 
-const YEAR = 2025;
+const DEFAULT_SEASON_BUNDLE_BASE_URL = "https://api.jolpi.ca/ergast/f1";
 const DELAY_MS = 750;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function requiredSeasonRoot(): string {
-  const v = process.env.SEASON_BUNDLE_BASE_URL?.trim();
-  if (!v) {
-    console.error("Set SEASON_BUNDLE_BASE_URL to the season JSON root, then retry.");
-    process.exit(1);
+function resolveYear(): number {
+  const flag = process.argv.find((a) => a.startsWith("--year="));
+  const fromFlag = flag ? flag.slice("--year=".length) : undefined;
+  const raw = (fromFlag ?? process.env.SEASON_YEAR ?? "").trim();
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1950 || n > 2100) {
+      console.error(`Invalid year "${raw}". Pass --year=YYYY or set SEASON_YEAR.`);
+      process.exit(1);
+    }
+    return n;
   }
-  return v.replace(/\/$/, "");
+  return new Date().getUTCFullYear();
+}
+
+function resolveSeasonRoot(): string {
+  const v = (process.env.SEASON_BUNDLE_BASE_URL ?? "").trim();
+  const root = v || DEFAULT_SEASON_BUNDLE_BASE_URL;
+  return root.replace(/\/$/, "");
 }
 
 async function main(): Promise<void> {
-  const seasonRoot = requiredSeasonRoot();
-  console.log("Fetching calendar + standings...");
-  const calendar = await fetchCalendar(seasonRoot, YEAR);
+  const year = resolveYear();
+  const seasonRoot = resolveSeasonRoot();
+  console.log(`Fetching ${year} calendar + standings from ${seasonRoot}...`);
+  const calendar = await fetchCalendar(seasonRoot, year);
   const raceResultsByRound: Record<number, RaceResultPayload> = {};
 
   const races = [...calendar.seasonData.races].sort((a, b) => a.id - b.id);
@@ -39,7 +60,7 @@ async function main(): Promise<void> {
     let payload: RaceResultPayload | null = null;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        payload = await fetchRaceResults(seasonRoot, race.id, race.hasSprint, YEAR);
+        payload = await fetchRaceResults(seasonRoot, race.id, race.hasSprint, year);
         break;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -58,7 +79,7 @@ async function main(): Promise<void> {
   }
 
   const out = { calendar, raceResultsByRound };
-  const outPath = join(process.cwd(), "data", "bundled-season-2025.json");
+  const outPath = join(process.cwd(), "data", `bundled-season-${year}.json`);
   writeFileSync(outPath, JSON.stringify(out), "utf8");
   console.log(`Wrote ${outPath}`);
 }
