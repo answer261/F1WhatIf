@@ -11,12 +11,17 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { androidScreenVerticalPad } from "../utils/androidScreenPad";
 import { useRaceStore } from "../store/useRaceStore";
 import type { Race } from "../data/f1-constants";
+import type { SeasonYear } from "../services/bundledSeason";
+import SeasonPicker from "../components/SeasonPicker";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Props = {
+  seasonYear: SeasonYear;
+  availableYears: readonly SeasonYear[];
+  onSelectSeason: (year: SeasonYear) => void;
   onSelectRace: (raceId: number) => void;
   onOpenStandings: () => void;
 };
@@ -98,7 +103,13 @@ const RaceCard = React.memo(({
 // SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function RaceListScreen({ onSelectRace, onOpenStandings }: Props) {
+export default function RaceListScreen({
+  seasonYear,
+  availableYears,
+  onSelectSeason,
+  onSelectRace,
+  onOpenStandings,
+}: Props) {
   const { seasonData, isRaceModified, resetRace, resetAll, overrides } = useRaceStore();
   const races = seasonData?.races ?? [];
   const modifiedCount = Object.keys(overrides).length;
@@ -120,9 +131,14 @@ export default function RaceListScreen({ onSelectRace, onOpenStandings }: Props)
 
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>F1 2025</Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>F1 {seasonYear}</Text>
           <Text style={styles.headerSub}>What If Simulator</Text>
+          <SeasonPicker
+            selectedYear={seasonYear}
+            availableYears={availableYears}
+            onSelect={onSelectSeason}
+          />
         </View>
         <View style={styles.headerRight}>
           {modifiedCount > 0 && (
@@ -170,7 +186,8 @@ const COLORS = {
 
 const styles = StyleSheet.create({
   container:          { flex: 1, backgroundColor: COLORS.bg },
-  header:             { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  header:             { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  headerLeft:         { flex: 1, marginRight: 8 },
   headerTitle:        { fontSize: 22, fontWeight: "800", color: COLORS.white, letterSpacing: 1 },
   headerSub:          { fontSize: 12, color: COLORS.grey, marginTop: 1 },
   headerRight:        { flexDirection: "row", alignItems: "center", gap: 8 },

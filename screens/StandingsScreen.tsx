@@ -10,9 +10,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { androidScreenVerticalPad } from "../utils/androidScreenPad";
 import { useRaceStore } from "../store/useRaceStore";
+import { useHardwareBack } from "../hooks/useHardwareBack";
 
 type Tab = "drivers" | "constructors";
-type Props = { onBack: () => void };
+type Props = { seasonYear: number; onBack: () => void };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -41,7 +42,9 @@ function getDeltaColor(delta: number): string {
 // SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function StandingsScreen({ onBack }: Props) {
+export default function StandingsScreen({ seasonYear, onBack }: Props) {
+  useHardwareBack(onBack);
+
   const [activeTab, setActiveTab] = useState<Tab>("drivers");
 
   const {
@@ -89,7 +92,7 @@ export default function StandingsScreen({ onBack }: Props) {
               </Text>
             </View>
           ) : (
-            <Text style={styles.headerSub}>Official 2025 results</Text>
+            <Text style={styles.headerSub}>Official {seasonYear} results</Text>
           )}
         </View>
         <View style={styles.headerSpacer} />

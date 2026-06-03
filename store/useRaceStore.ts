@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { SeasonData, RaceEntry } from "../data/f1-constants";
-import { preloadedRaceResultsMap } from "../services/bundledSeason";
+import type { SeasonYear } from "../services/bundledSeason";
 import type {
   BaselineConstructorStanding,
   BaselineDriverStanding,
@@ -22,7 +22,8 @@ export type RaceLoadState = "idle" | "loading" | "loaded" | "error";
 
 export type StoreState = {
   seasonData: SeasonData | null;
-  isSeasonLoaded: boolean;
+  loadedSeasonYear: SeasonYear | null;
+  preloadedRaceResults: Record<number, RaceResultPayload>;
 
   baselineDriverStandings: BaselineDriverStanding[];
   baselineConstructorStandings: BaselineConstructorStanding[];
@@ -40,7 +41,8 @@ export type StoreState = {
     data: SeasonData,
     driverStandings: BaselineDriverStanding[],
     constructorStandings: BaselineConstructorStanding[],
-    preloadedRaceResults?: Record<number, RaceResultPayload>
+    preloadedRaceResults: Record<number, RaceResultPayload>,
+    seasonYear: SeasonYear
   ) => void;
   loadRaceResults: (raceId: number) => Promise<void>;
   setRaceResults: (raceId: number, results: RaceEntry[]) => void;
@@ -82,7 +84,8 @@ function recalculate(
 
 export const useRaceStore = create<StoreState>((set, get) => ({
   seasonData: null,
-  isSeasonLoaded: false,
+  loadedSeasonYear: null,
+  preloadedRaceResults: {},
   baselineDriverStandings: [],
   baselineConstructorStandings: [],
   localDriverStandings: [],
@@ -91,7 +94,7 @@ export const useRaceStore = create<StoreState>((set, get) => ({
   overrides: {},
   driverTeamMap: {},
 
-  loadSeason: (data, driverStandings, constructorStandings, preloadedRaceResults) => {
+  loadSeason: (data, driverStandings, constructorStandings, preloadedRaceResults, seasonYear) => {
     const safeDriverStandings = driverStandings ?? [];
     const safeConstructorStandings = constructorStandings ?? [];
 
@@ -123,7 +126,8 @@ export const useRaceStore = create<StoreState>((set, get) => ({
 
     set({
       seasonData,
-      isSeasonLoaded: true,
+      loadedSeasonYear: seasonYear,
+      preloadedRaceResults,
       baselineDriverStandings: safeDriverStandings,
       baselineConstructorStandings: safeConstructorStandings,
       driverTeamMap,
@@ -148,7 +152,7 @@ export const useRaceStore = create<StoreState>((set, get) => ({
       raceLoadStates: { ...s.raceLoadStates, [raceId]: "loading" },
     }));
 
-    const fallback = preloadedRaceResultsMap[raceId];
+    const fallback = get().preloadedRaceResults[raceId];
     if (!fallback) {
       console.error(`No bundled results for round ${raceId}`);
       set((s) => ({

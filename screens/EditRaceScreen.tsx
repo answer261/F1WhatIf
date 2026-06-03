@@ -15,6 +15,7 @@ import DraggableFlatList, {
   ScaleDecorator,
 } from "react-native-draggable-flatlist";
 import { useRaceStore } from "../store/useRaceStore";
+import { useHardwareBack } from "../hooks/useHardwareBack";
 import type { RaceEntry, Driver, Team } from "../data/f1-constants";
 
 type Props = { raceId: number; onBack: () => void };
@@ -323,6 +324,8 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
       onBack();
     }
   }, [hasUnsavedChanges, onBack]);
+
+  useHardwareBack(handleBack);
 
   if (!race) return null;
 

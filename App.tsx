@@ -10,7 +10,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { androidScreenVerticalPad } from "./utils/androidScreenPad";
 import { useSeasonData } from "./hooks/useSeasonData";
-import { preloadedRaceResultsMap } from "./services/bundledSeason";
+import { useSelectedSeason } from "./hooks/useSelectedSeason";
+import { getPreloadedRaceResultsMap } from "./services/bundledSeason";
 import { useRaceStore } from "./store/useRaceStore";
 import RaceListScreen from "./screens/RaceListScreen";
 import EditRaceScreen from "./screens/EditRaceScreen";
@@ -21,11 +22,11 @@ type Screen =
   | { name: "editRace"; raceId: number }
   | { name: "standings" };
 
-function LoadingScreen() {
+function LoadingScreen({ year }: { year: number }) {
   return (
     <View style={styles.centered}>
       <ActivityIndicator size="large" color="#e8002d" />
-      <Text style={styles.loadingText}>Loading 2025 season...</Text>
+      <Text style={styles.loadingText}>Loading {year} season...</Text>
     </View>
   );
 }
@@ -44,38 +45,53 @@ function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => voi
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "raceList" });
-  const seasonData = useSeasonData();
-  const { loadSeason, isSeasonLoaded } = useRaceStore();
+  const { isReady, selectedYear, setSelectedYear, availableYears } =
+    useSelectedSeason();
+  const seasonData = useSeasonData(selectedYear);
+  const { loadSeason, loadedSeasonYear } = useRaceStore();
   const calendarPayload =
     seasonData.status === "success" ? seasonData.data : null;
 
   useEffect(() => {
-    if (!calendarPayload || isSeasonLoaded) return;
+    if (!isReady || !calendarPayload) return;
+    if (loadedSeasonYear === selectedYear) return;
     loadSeason(
       calendarPayload.seasonData,
       calendarPayload.driverStandings,
       calendarPayload.constructorStandings,
-      preloadedRaceResultsMap
+      getPreloadedRaceResultsMap(selectedYear),
+      selectedYear
     );
-  }, [calendarPayload, isSeasonLoaded, loadSeason]);
+    setScreen({ name: "raceList" });
+  }, [isReady, calendarPayload, selectedYear, loadedSeasonYear, loadSeason]);
+
+  const showApp = isReady && seasonData.status === "success";
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        {seasonData.status === "loading" && (
+        {!isReady && (
           <SafeAreaView style={[styles.root, androidScreenVerticalPad]} edges={["top", "bottom"]}>
-            <LoadingScreen />
+            <LoadingScreen year={selectedYear} />
           </SafeAreaView>
         )}
-        {seasonData.status === "error" && (
+        {isReady && seasonData.status === "loading" && (
+          <SafeAreaView style={[styles.root, androidScreenVerticalPad]} edges={["top", "bottom"]}>
+            <LoadingScreen year={selectedYear} />
+          </SafeAreaView>
+        )}
+        {isReady && seasonData.status === "error" && (
           <SafeAreaView style={[styles.root, androidScreenVerticalPad]} edges={["top", "bottom"]}>
             <ErrorScreen message={seasonData.error} onRetry={seasonData.retry} />
           </SafeAreaView>
         )}
-        {seasonData.status === "success" && (
+        {showApp && (
           <>
             {screen.name === "raceList" && (
               <RaceListScreen
+                seasonYear={selectedYear}
+                availableYears={availableYears}
+                onSelectSeason={setSelectedYear}
                 onSelectRace={(id) => setScreen({ name: "editRace", raceId: id })}
                 onOpenStandings={() => setScreen({ name: "standings" })}
               />
@@ -84,7 +100,10 @@ export default function App() {
               <EditRaceScreen raceId={screen.raceId} onBack={() => setScreen({ name: "raceList" })} />
             )}
             {screen.name === "standings" && (
-              <StandingsScreen onBack={() => setScreen({ name: "raceList" })} />
+              <StandingsScreen
+                seasonYear={selectedYear}
+                onBack={() => setScreen({ name: "raceList" })}
+              />
             )}
           </>
         )}

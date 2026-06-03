@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { CalendarData } from "../services/seasonTypes";
-import { bundledSeason2025 } from "../services/bundledSeason";
+import { getBundledSeason, type SeasonYear } from "../services/bundledSeason";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE TYPE
@@ -12,17 +12,17 @@ export type SeasonDataState =
   | { status: "success"; data: CalendarData; fromCache: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HOOK — 2025 season is shipped in data/bundled-season-2025.json (no network).
-// Regenerate JSON: npm run bundle-season — see scripts/fetch-bundled-season.ts.
+// HOOK — bundled JSON per year (no network).
+// Regenerate: npm run bundle-season -- --year=YYYY
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function useSeasonData(): SeasonDataState {
+export function useSeasonData(year: SeasonYear): SeasonDataState {
   return useMemo(
     () => ({
       status: "success" as const,
-      data: bundledSeason2025.calendar,
+      data: getBundledSeason(year).calendar,
       fromCache: false,
     }),
-    []
+    [year]
   );
 }
