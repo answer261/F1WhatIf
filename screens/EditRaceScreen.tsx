@@ -19,22 +19,51 @@ import { useHardwareBack } from "../hooks/useHardwareBack";
 import type { RaceEntry, Driver, Team } from "../data/f1-constants";
 
 type Props = { raceId: number; onBack: () => void };
-type RowItem = { driverId: string; isDnf: boolean };
+type RowItem = { driverId: string; isDnf: boolean; isDns: boolean };
 type ActiveTab = "race" | "sprint";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+function isFutureRace(bundledResults: RaceEntry[]): boolean {
+  return bundledResults.length === 0;
+}
+
+function sortRowItems(items: RowItem[]): RowItem[] {
+  return [
+    ...items.filter((i) => !i.isDns && !i.isDnf),
+    ...items.filter((i) => i.isDnf),
+    ...items.filter((i) => i.isDns),
+  ];
+}
+
 function buildRaceItems(entries: RaceEntry[]): RowItem[] {
   const finishers = entries
     .filter((e) => e.position !== null)
     .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
-    .map((e) => ({ driverId: e.driverId, isDnf: false }));
+    .map((e) => ({ driverId: e.driverId, isDnf: false, isDns: false }));
   const dnfs = entries
     .filter((e) => e.position === null)
-    .map((e) => ({ driverId: e.driverId, isDnf: true }));
+    .map((e) => ({ driverId: e.driverId, isDnf: true, isDns: false }));
   return [...finishers, ...dnfs];
+}
+
+function buildFutureRaceItems(allDriverIds: string[], savedEntries: RaceEntry[]): RowItem[] {
+  if (savedEntries.length === 0) {
+    return allDriverIds
+      .slice()
+      .sort()
+      .map((driverId) => ({ driverId, isDnf: false, isDns: true }));
+  }
+
+  const savedIds = new Set(savedEntries.map((e) => e.driverId));
+  const active = buildRaceItems(savedEntries);
+  const dns = allDriverIds
+    .filter((id) => !savedIds.has(id))
+    .sort()
+    .map((driverId) => ({ driverId, isDnf: false, isDns: true }));
+  return [...active, ...dns];
 }
 
 function buildSprintItems(entries: RaceEntry[]): RowItem[] {
@@ -49,7 +78,25 @@ function buildSprintItems(entries: RaceEntry[]): RowItem[] {
       const bPos = b.sprintPosition ?? (100 + (b.position ?? 99));
       return aPos - bPos;
     })
-    .map((e) => ({ driverId: e.driverId, isDnf: false }));
+    .map((e) => ({ driverId: e.driverId, isDnf: false, isDns: false }));
+}
+
+function buildFutureSprintItems(allDriverIds: string[], savedEntries: RaceEntry[]): RowItem[] {
+  if (savedEntries.length === 0) {
+    return allDriverIds
+      .slice()
+      .sort()
+      .map((driverId) => ({ driverId, isDnf: false, isDns: true }));
+  }
+
+  const sprintEntries = savedEntries.filter((e) => e.sprintPosition !== undefined);
+  const savedIds = new Set(sprintEntries.map((e) => e.driverId));
+  const active = buildSprintItems(sprintEntries);
+  const dns = allDriverIds
+    .filter((id) => !savedIds.has(id))
+    .sort()
+    .map((driverId) => ({ driverId, isDnf: false, isDns: true }));
+  return [...active, ...dns];
 }
 
 function buildResultsFromItems(
@@ -60,13 +107,32 @@ function buildResultsFromItems(
   let racePos = 1;
   const racePosMap = new Map<string, number | null>();
   for (const item of raceItems) {
+    if (item.isDns) continue;
     racePosMap.set(item.driverId, item.isDnf ? null : racePos++);
   }
 
   let sprintPos = 1;
   const sprintPosMap = new Map<string, number | null>();
   for (const item of sprintItems) {
+    if (item.isDns) continue;
     sprintPosMap.set(item.driverId, item.isDnf ? null : sprintPos++);
+  }
+
+  if (originalEntries.length === 0) {
+    const driverIds = new Set([
+      ...raceItems.filter((i) => !i.isDns).map((i) => i.driverId),
+      ...sprintItems.filter((i) => !i.isDns).map((i) => i.driverId),
+    ]);
+    return [...driverIds].map((driverId) => {
+      const entry: RaceEntry = {
+        driverId,
+        position: racePosMap.get(driverId) ?? null,
+      };
+      if (sprintPosMap.has(driverId)) {
+        entry.sprintPosition = sprintPosMap.get(driverId) ?? null;
+      }
+      return entry;
+    });
   }
 
   return originalEntries.map((entry) => ({
@@ -82,7 +148,12 @@ function buildResultsFromItems(
 
 function itemsEqual(a: RowItem[], b: RowItem[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((item, i) => item.driverId === b[i].driverId && item.isDnf === b[i].isDnf);
+  return a.every(
+    (item, i) =>
+      item.driverId === b[i].driverId &&
+      item.isDnf === b[i].isDnf &&
+      item.isDns === b[i].isDns
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,26 +165,32 @@ type DriverRowProps = RenderItemParams<RowItem> & {
   teamColor: string;
   displayPosition: number | null;
   isModifiedRow: boolean;
+  isFutureRace: boolean;
   onToggleDnf: (driverId: string) => void;
+  onToggleDns: (driverId: string) => void;
 };
 
 const DriverRow = React.memo(({
   item, drag, isActive,
   driver, teamColor,
   displayPosition, isModifiedRow,
-  onToggleDnf,
+  isFutureRace,
+  onToggleDnf, onToggleDns,
 }: DriverRowProps) => (
   <ScaleDecorator activeScale={1.03}>
     <View style={[
       styles.row,
       item.isDnf && styles.rowDnf,
+      item.isDns && styles.rowDns,
       isModifiedRow && styles.rowModified,
       isActive && styles.rowActive,
     ]}>
       <View style={styles.positionContainer}>
-        {item.isDnf
-          ? <Text style={styles.dnfLabel}>DNF</Text>
-          : <Text style={styles.positionText}>P{displayPosition}</Text>
+        {item.isDns
+          ? <Text style={styles.dnsLabel}>DNS</Text>
+          : item.isDnf
+            ? <Text style={styles.dnfLabel}>DNF</Text>
+            : <Text style={styles.positionText}>P{displayPosition}</Text>
         }
       </View>
       <View style={[styles.teamBar, { backgroundColor: teamColor }]} />
@@ -126,13 +203,23 @@ const DriverRow = React.memo(({
           </Text>
         </View>
       </View>
-      <TouchableOpacity
-        style={[styles.dnfBtn, item.isDnf && styles.dnfBtnActive]}
-        onPress={() => onToggleDnf(item.driverId)}
-      >
-        <Text style={[styles.dnfBtnText, item.isDnf && styles.dnfBtnTextActive]}>DNF</Text>
-      </TouchableOpacity>
-      {!item.isDnf ? (
+      {isFutureRace && (
+        <TouchableOpacity
+          style={[styles.dnsBtn, item.isDns && styles.dnsBtnActive]}
+          onPress={() => onToggleDns(item.driverId)}
+        >
+          <Text style={[styles.dnsBtnText, item.isDns && styles.dnsBtnTextActive]}>DNS</Text>
+        </TouchableOpacity>
+      )}
+      {!item.isDns && (
+        <TouchableOpacity
+          style={[styles.dnfBtn, item.isDnf && styles.dnfBtnActive]}
+          onPress={() => onToggleDnf(item.driverId)}
+        >
+          <Text style={[styles.dnfBtnText, item.isDnf && styles.dnfBtnTextActive]}>DNF</Text>
+        </TouchableOpacity>
+      )}
+      {!item.isDnf && !item.isDns ? (
         <TouchableOpacity style={styles.dragHandle} onLongPress={drag} delayLongPress={150}>
           <Text style={styles.dragHandleIcon}>⠿</Text>
         </TouchableOpacity>
@@ -152,18 +239,25 @@ type DraggableListProps = {
   originalItems: RowItem[];
   drivers: Record<string, Driver>;
   teams: Record<string, Team>;
+  isFutureRace: boolean;
   onDragEnd: (data: RowItem[]) => void;
   onToggleDnf: (driverId: string) => void;
+  onToggleDns: (driverId: string) => void;
 };
 
 const DraggableList = ({
   items, originalItems,
-  drivers, teams, onDragEnd, onToggleDnf,
+  drivers, teams, isFutureRace,
+  onDragEnd, onToggleDnf, onToggleDns,
 }: DraggableListProps) => {
   const originalPosMap = useMemo(() => {
-    const map: Record<string, number | null> = {};
+    const map: Record<string, number | null | "dns"> = {};
     originalItems.forEach((item, i) => {
-      map[item.driverId] = item.isDnf ? null : i + 1;
+      if (item.isDns) {
+        map[item.driverId] = "dns";
+      } else {
+        map[item.driverId] = item.isDnf ? null : i + 1;
+      }
     });
     return map;
   }, [originalItems]);
@@ -171,45 +265,56 @@ const DraggableList = ({
   const positionMap = useMemo(() => {
     const map: Record<string, number | null> = {};
     let pos = 1;
-    items.forEach((item) => { map[item.driverId] = item.isDnf ? null : pos++; });
+    items.forEach((item) => {
+      if (item.isDns || item.isDnf) return;
+      map[item.driverId] = pos++;
+    });
     return map;
   }, [items]);
 
   const handleDragEnd = useCallback(({ data }: { data: RowItem[] }) => {
-    onDragEnd([...data.filter((i) => !i.isDnf), ...data.filter((i) => i.isDnf)]);
+    onDragEnd(sortRowItems(data));
   }, [onDragEnd]);
 
   const renderItem = useCallback((params: RenderItemParams<RowItem>) => {
     const { driverId } = params.item;
     const driver = drivers[driverId];
     const teamColor = teams[driver?.teamId ?? ""]?.color ?? "#888";
-    const currentPos = positionMap[driverId];
+    const currentPos = params.item.isDns ? "dns" : params.item.isDnf ? null : positionMap[driverId];
     const originalPos = originalPosMap[driverId];
     const isModifiedRow =
       currentPos !== originalPos ||
-      (params.item.isDnf && originalPos !== null) ||
-      (!params.item.isDnf && originalPos === null);
+      (params.item.isDnf && originalPos !== null && originalPos !== "dns") ||
+      (!params.item.isDnf && !params.item.isDns && originalPos === null) ||
+      (params.item.isDns && originalPos !== "dns") ||
+      (!params.item.isDns && originalPos === "dns");
 
     return (
       <DriverRow
         {...params}
         driver={driver}
         teamColor={teamColor}
-        displayPosition={currentPos}
+        displayPosition={typeof currentPos === "number" ? currentPos : null}
         isModifiedRow={isModifiedRow}
+        isFutureRace={isFutureRace}
         onToggleDnf={onToggleDnf}
+        onToggleDns={onToggleDns}
       />
     );
-  }, [drivers, teams, positionMap, originalPosMap, onToggleDnf]);
+  }, [drivers, teams, positionMap, originalPosMap, isFutureRace, onToggleDnf, onToggleDns]);
 
+  const finisherCount = items.filter((i) => !i.isDnf && !i.isDns).length;
   const dnfCount = items.filter((i) => i.isDnf).length;
+  const dnsCount = items.filter((i) => i.isDns).length;
 
   return (
     <>
-      {dnfCount > 0 && (
+      {(dnfCount > 0 || dnsCount > 0) && (
         <View style={styles.statsBar}>
           <Text style={styles.statsText}>
-            {items.length - dnfCount} finishers · {dnfCount} DNF
+            {finisherCount} finishers
+            {dnfCount > 0 ? ` · ${dnfCount} DNF` : ""}
+            {dnsCount > 0 ? ` · ${dnsCount} DNS` : ""}
           </Text>
         </View>
       )}
@@ -240,6 +345,8 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
   const race = useMemo(() => seasonData?.races.find((r) => r.id === raceId), [seasonData, raceId]);
   const drivers = seasonData?.drivers ?? {};
   const teams = seasonData?.teams ?? {};
+  const allDriverIds = useMemo(() => Object.keys(drivers), [drivers]);
+  const futureRace = isFutureRace(race?.results ?? []);
   const loadState = raceLoadStates[raceId] ?? "idle";
   const isLoaded = loadState === "loaded";
   const hasError = loadState === "error";
@@ -262,14 +369,32 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
   useEffect(() => {
     if (isLoaded && !editInitialised) {
       const results = getResultsForRace(raceId);
-      setRaceItems(buildRaceItems(results));
-      setSprintItems(buildSprintItems(results));
+      if (futureRace) {
+        setRaceItems(buildFutureRaceItems(allDriverIds, results));
+        setSprintItems(buildFutureSprintItems(allDriverIds, results));
+      } else {
+        setRaceItems(buildRaceItems(results));
+        setSprintItems(buildSprintItems(results));
+      }
       setEditInitialised(true);
     }
-  }, [isLoaded, editInitialised, raceId, getResultsForRace]);
+  }, [isLoaded, editInitialised, raceId, getResultsForRace, futureRace, allDriverIds]);
 
-  const originalRaceItems = useMemo(() => buildRaceItems(race?.results ?? []), [race]);
-  const originalSprintItems = useMemo(() => buildSprintItems(race?.results ?? []), [race]);
+  const originalRaceItems = useMemo(() => {
+    const bundled = race?.results ?? [];
+    if (isFutureRace(bundled)) {
+      return buildFutureRaceItems(allDriverIds, bundled);
+    }
+    return buildRaceItems(bundled);
+  }, [race, allDriverIds]);
+
+  const originalSprintItems = useMemo(() => {
+    const bundled = race?.results ?? [];
+    if (isFutureRace(bundled)) {
+      return buildFutureSprintItems(allDriverIds, bundled);
+    }
+    return buildSprintItems(bundled);
+  }, [race, allDriverIds]);
 
   const hasUnsavedChanges = useMemo(() =>
     editInitialised && (
@@ -281,15 +406,41 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
 
   const toggleRaceDnf = useCallback((driverId: string) => {
     setRaceItems((prev) => {
-      const updated = prev.map((i) => i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i);
-      return [...updated.filter((i) => !i.isDnf), ...updated.filter((i) => i.isDnf)];
+      const updated = prev.map((i) =>
+        i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i
+      );
+      return sortRowItems(updated);
     });
   }, []);
 
   const toggleSprintDnf = useCallback((driverId: string) => {
     setSprintItems((prev) => {
-      const updated = prev.map((i) => i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i);
-      return [...updated.filter((i) => !i.isDnf), ...updated.filter((i) => i.isDnf)];
+      const updated = prev.map((i) =>
+        i.driverId === driverId ? { ...i, isDnf: !i.isDnf } : i
+      );
+      return sortRowItems(updated);
+    });
+  }, []);
+
+  const toggleRaceDns = useCallback((driverId: string) => {
+    setRaceItems((prev) => {
+      const updated = prev.map((i) => {
+        if (i.driverId !== driverId) return i;
+        if (i.isDns) return { ...i, isDns: false, isDnf: false };
+        return { ...i, isDns: true, isDnf: false };
+      });
+      return sortRowItems(updated);
+    });
+  }, []);
+
+  const toggleSprintDns = useCallback((driverId: string) => {
+    setSprintItems((prev) => {
+      const updated = prev.map((i) => {
+        if (i.driverId !== driverId) return i;
+        if (i.isDns) return { ...i, isDns: false, isDnf: false };
+        return { ...i, isDns: true, isDnf: false };
+      });
+      return sortRowItems(updated);
     });
   }, []);
 
@@ -306,13 +457,18 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
         text: "Reset", style: "destructive",
         onPress: () => {
           resetRace(raceId);
-          const original = race?.results ?? [];
-          setRaceItems(buildRaceItems(original));
-          setSprintItems(buildSprintItems(original));
+          const bundled = race?.results ?? [];
+          if (isFutureRace(bundled)) {
+            setRaceItems(buildFutureRaceItems(allDriverIds, bundled));
+            setSprintItems(buildFutureSprintItems(allDriverIds, bundled));
+          } else {
+            setRaceItems(buildRaceItems(bundled));
+            setSprintItems(buildSprintItems(bundled));
+          }
         },
       },
     ]);
-  }, [raceId, race, resetRace]);
+  }, [raceId, race, resetRace, allDriverIds]);
 
   const handleBack = useCallback(() => {
     if (hasUnsavedChanges) {
@@ -372,7 +528,10 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
       {isLoaded && (
         <View style={styles.infoBar}>
           <Text style={styles.infoText}>
-            Hold <Text style={styles.infoHighlight}>⠿</Text> to drag · tap DNF to retire
+            {futureRace
+              ? <>Tap <Text style={styles.infoHighlight}>DNS</Text> to enter a driver · hold <Text style={styles.infoHighlight}>⠿</Text> to drag</>
+              : <>Hold <Text style={styles.infoHighlight}>⠿</Text> to drag · tap DNF to retire</>
+            }
           </Text>
         </View>
       )}
@@ -402,8 +561,10 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
           originalItems={originalRaceItems}
           drivers={drivers}
           teams={teams}
+          isFutureRace={futureRace}
           onDragEnd={setRaceItems}
           onToggleDnf={toggleRaceDnf}
+          onToggleDns={toggleRaceDns}
         />
       )}
 
@@ -414,8 +575,10 @@ export default function EditRaceScreen({ raceId, onBack }: Props) {
           originalItems={originalSprintItems}
           drivers={drivers}
           teams={teams}
+          isFutureRace={futureRace}
           onDragEnd={setSprintItems}
           onToggleDnf={toggleSprintDnf}
+          onToggleDns={toggleSprintDns}
         />
       )}
 
@@ -454,6 +617,8 @@ const COLORS = {
   greyLight:       "#444444",
   dnf:             "#2a1a1a",
   dnfBorder:       "#5a2a2a",
+  dns:             "#1a1a2a",
+  dnsBorder:       "#2a2a5a",
 };
 
 const styles = StyleSheet.create({
@@ -481,11 +646,13 @@ const styles = StyleSheet.create({
   listContent:          { paddingHorizontal: 10, paddingBottom: 24 },
   row:                  { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.surface, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border, overflow: "hidden", height: 56, marginTop: 5 },
   rowDnf:               { backgroundColor: COLORS.dnf, borderColor: COLORS.dnfBorder, opacity: 0.75 },
+  rowDns:               { backgroundColor: COLORS.dns, borderColor: COLORS.dnsBorder, opacity: 0.6 },
   rowModified:          { borderColor: COLORS.yellow, backgroundColor: COLORS.surfaceModified },
   rowActive:            { backgroundColor: COLORS.surfaceActive, borderColor: COLORS.white, shadowColor: COLORS.white, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 8 },
   positionContainer:    { width: 44, alignItems: "center", justifyContent: "center" },
   positionText:         { color: COLORS.white, fontSize: 13, fontWeight: "700" },
   dnfLabel:             { color: COLORS.red, fontSize: 11, fontWeight: "800" },
+  dnsLabel:             { color: "#8888cc", fontSize: 11, fontWeight: "800" },
   teamBar:              { width: 3, alignSelf: "stretch", marginRight: 10 },
   driverInfo:           { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
   driverFlag:           { fontSize: 18 },
@@ -495,6 +662,10 @@ const styles = StyleSheet.create({
   dnfBtnActive:         { borderColor: COLORS.red, backgroundColor: COLORS.red + "22" },
   dnfBtnText:           { color: COLORS.grey, fontSize: 10, fontWeight: "700" },
   dnfBtnTextActive:     { color: COLORS.red },
+  dnsBtn:               { paddingHorizontal: 8, height: 28, borderRadius: 6, borderWidth: 1, borderColor: COLORS.greyLight, alignItems: "center", justifyContent: "center", marginRight: 6 },
+  dnsBtnActive:         { borderColor: "#8888cc", backgroundColor: "#8888cc22" },
+  dnsBtnText:           { color: COLORS.grey, fontSize: 10, fontWeight: "700" },
+  dnsBtnTextActive:     { color: "#8888cc" },
   dragHandle:           { paddingHorizontal: 10, paddingVertical: 8, alignItems: "center", justifyContent: "center" },
   dragHandleIcon:       { color: COLORS.grey, fontSize: 20, lineHeight: 22 },
   dragHandlePlaceholder:{ width: 40 },
